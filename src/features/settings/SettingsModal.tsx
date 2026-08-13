@@ -252,7 +252,11 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
                       </small>
                       {!m.hasApiKey && (
                         <small className="model-list__warn">
-                          保存済みキーが読めません。同じ名前で登録し直してください。
+                          {mode === 'static'
+                            ? // 保存しない設定なら、これは異常ではなく想定どおりの状態。
+                              // 「読めません」と出すと不具合に見えるので言い方を変える。
+                              'キーはこのタブ限りでした。使うには登録し直してください。'
+                            : '保存済みキーが読めません。同じ名前で登録し直してください。'}
                         </small>
                       )}
                     </span>
