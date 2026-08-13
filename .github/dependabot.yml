@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # SHA で固定した action は自動では古くならないので、更新を PR で提案させる。
+  # 固定 → 提案 → レビューして取り込む、が供給網対策として機能する形。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

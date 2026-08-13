@@ -1,7 +1,6 @@
 import 'dotenv/config'
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { cors } from 'hono/cors'
 import { z } from 'zod'
 import { compile, designSchema } from '../core/index.js'
 import { designLogo } from '../lib/design-agent.js'
@@ -10,9 +9,17 @@ import { errorBody, noModelRegisteredBody } from '../lib/ai-error-codes.js'
 import { resolveModelConfig } from './config/resolve-model.js'
 import { listModels } from './config/models.js'
 import modelsRoute from './routes/models.js'
+import { originGuard, securityHeaders } from './security.js'
+
+const port = Number(process.env.GEOLOGO_PORT ?? 8787)
 
 const app = new Hono()
-app.use('/api/*', cors())
+
+// CORS は張らない。ブラウザからは Vite の proxy 経由で同一オリジンとして届くため
+// 不要で、開けると任意のサイトからこのローカル API を叩けるようになる。
+// 代わりに送信元を検査する。
+app.use('/api/*', securityHeaders)
+app.use('/api/*', originGuard(port))
 
 app.get('/api/health', (c) =>
   c.json({
@@ -78,7 +85,12 @@ app.post('/api/compile', async (c) => {
   }
 })
 
-const port = Number(process.env.GEOLOGO_PORT ?? 8787)
-serve({ fetch: app.fetch, port }, (info) => {
-  console.log(`geo-logo api  http://localhost:${info.port}  (${listModels().length} models registered)`)
+// ループバックのみに束縛する。既定の 0.0.0.0 だと同一 LAN の他端末から
+// API キーを使ったリクエストを投げられる。外部公開が必要なら明示的に指定する。
+const hostname = process.env.GEOLOGO_HOST ?? '127.0.0.1'
+
+serve({ fetch: app.fetch, port, hostname }, (info) => {
+  console.log(
+    `geo-logo api  http://${hostname}:${info.port}  (${listModels().length} models registered)`,
+  )
 })

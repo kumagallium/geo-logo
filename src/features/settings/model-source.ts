@@ -103,16 +103,24 @@ export async function listModels(): Promise<ModelSummary[]> {
   }))
 }
 
-export async function addModel(input: ModelInput): Promise<void> {
+/**
+ * @param persistKey 静的モードでのみ意味を持つ。true のとき API キーを
+ *   localStorage へ書く。既定 false（タブを閉じるまでのメモリ保持）。
+ *   サーバーモードではキーは常にサーバー側に保存されるため無視される。
+ */
+export async function addModel(input: ModelInput, persistKey = false): Promise<void> {
   if ((await currentMode()) === 'static') {
-    addLLMModel({
-      name: input.name,
-      provider: input.provider,
-      modelId: input.modelId,
-      apiKey: input.apiKey,
-      apiBase: input.apiBase,
-      rate: input.rate,
-    })
+    addLLMModel(
+      {
+        name: input.name,
+        provider: input.provider,
+        modelId: input.modelId,
+        apiKey: input.apiKey,
+        apiBase: input.apiBase,
+        rate: input.rate,
+      },
+      persistKey,
+    )
     return
   }
 
@@ -132,18 +140,24 @@ export async function addModel(input: ModelInput): Promise<void> {
 }
 
 /** 既存モデルの認証情報を再利用してモデルを追加する */
-export async function addModelFromSource(input: ModelInputFromSource): Promise<void> {
+export async function addModelFromSource(
+  input: ModelInputFromSource,
+  persistKey = false,
+): Promise<void> {
   if ((await currentMode()) === 'static') {
     const source = getLLMModels().find((m) => m.id === input.sourceModelId)
     if (!source) throw new Error('参照元のモデルが見つかりません')
-    addLLMModel({
-      name: input.name,
-      provider: source.provider,
-      modelId: input.modelId,
-      apiKey: source.apiKey,
-      apiBase: input.apiBase !== undefined ? input.apiBase : source.apiBase,
-      rate: input.rate,
-    })
+    addLLMModel(
+      {
+        name: input.name,
+        provider: source.provider,
+        modelId: input.modelId,
+        apiKey: source.apiKey,
+        apiBase: input.apiBase !== undefined ? input.apiBase : source.apiBase,
+        rate: input.rate,
+      },
+      persistKey,
+    )
     return
   }
 

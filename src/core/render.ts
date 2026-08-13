@@ -43,13 +43,13 @@ export function renderLogo(
   const box = pad(raw, padding)
 
   const bg = options.background
-    ? `<rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" fill="${design.palette.background}"/>`
+    ? `<rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" fill="${color(design.palette.background)}"/>`
     : ''
 
   const paths = built.parts
     .map(
       (p) =>
-        `<path d="${p.pathData}" fill="${p.fill}" fill-rule="evenodd" data-part="${escapeAttr(p.id)}"/>`,
+        `<path d="${escapeAttr(p.pathData)}" fill="${color(p.fill)}" fill-rule="evenodd" data-part="${escapeAttr(p.id)}"/>`,
     )
     .join('\n    ')
 
@@ -106,13 +106,16 @@ export function renderBlueprint(
     .join('\n    ')
 
   const silhouette = built.parts
-    .map((p) => `<path d="${p.pathData}" fill="${ink}" fill-opacity="0.14" fill-rule="evenodd"/>`)
+    .map(
+      (p) =>
+        `<path d="${escapeAttr(p.pathData)}" fill="${ink}" fill-opacity="0.14" fill-rule="evenodd"/>`,
+    )
     .join('\n    ')
 
   const outline = built.parts
     .map(
       (p) =>
-        `<path d="${p.pathData}" fill="none" stroke="${ink}" stroke-width="${hair * 3}" fill-rule="evenodd"/>`,
+        `<path d="${escapeAttr(p.pathData)}" fill="none" stroke="${ink}" stroke-width="${hair * 3}" fill-rule="evenodd"/>`,
     )
     .join('\n    ')
 
@@ -195,8 +198,25 @@ function formatModule(v: number): string {
   return `${rounded}M`
 }
 
+// --- 多層防御 ---
+// dsl.ts のスキーマが不正な色や id を弾く（第一層）が、レンダラ単体でも
+// markup を抜け出せないようにしておく。compile() を通さず render を直接呼ぶ
+// 経路が将来増えても安全側に倒れる。
+
+const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
+
+/** 色として使える形だけ通し、それ以外は黒へ落とす（属性を抜け出させない） */
+function color(value: string): string {
+  return HEX_COLOR.test(value) ? value : '#000000'
+}
+
 function escapeAttr(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 }
 
 function escapeText(s: string): string {

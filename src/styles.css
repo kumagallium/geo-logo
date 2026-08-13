@@ -579,6 +579,28 @@ body {
   font-family: inherit !important;
 }
 
+.persist {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.persist input {
+  margin-top: 2px;
+}
+
+.persist small {
+  display: block;
+  color: var(--ink-soft);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
 .rate {
   border: 1px solid var(--line);
   border-radius: 8px;

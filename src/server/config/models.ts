@@ -9,7 +9,7 @@
 // metadata のみを書く。旧形式（apiKey をファイルに含む）のデータは初回読み込み時に
 // Keychain へ移行し、ファイルから消す。
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { isKeychainEnabled, getApiKey, setApiKey, deleteApiKey } from './keychain.js'
 import type { ModelConfig } from '../../lib/model-config.js'
@@ -33,7 +33,23 @@ function modelsPath(): string {
 
 function ensureDataDir(): void {
   if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true })
+    // 0700: 同一マシンの他ユーザーから読ませない。Keychain 無効時は
+    // このファイルが API キーの実体になるため、既定の 0755 では緩すぎる。
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+  }
+  tighten(dataDir, 0o700)
+}
+
+/** 権限を絞る。既に存在するファイル・別環境から持ち込んだファイルにも効かせる。 */
+function tighten(path: string, mode: number): void {
+  // Windows では chmod がほぼ無効。失敗しても起動は止めない。
+  if (process.platform === 'win32') return
+  try {
+    chmodSync(path, mode)
+  } catch (e) {
+    console.warn(
+      `[models] failed to chmod ${path}: ${e instanceof Error ? e.message : String(e)}`,
+    )
   }
 }
 
@@ -60,7 +76,9 @@ function readRawStored(): StoredModelConfig[] {
 
 function writeRawStored(models: StoredModelConfig[]): void {
   ensureDataDir()
-  writeFileSync(modelsPath(), JSON.stringify(models, null, 2), 'utf-8')
+  // mode は新規作成時にしか効かないので、既存ファイルにも chmod をかけ直す
+  writeFileSync(modelsPath(), JSON.stringify(models, null, 2), { encoding: 'utf-8', mode: 0o600 })
+  tighten(modelsPath(), 0o600)
 }
 
 /**

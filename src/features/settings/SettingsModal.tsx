@@ -18,7 +18,7 @@ import {
   removeModel,
   type ModelSummary,
 } from './model-source'
-import { loadSettings, saveSettings } from './store'
+import { forgetPersistedKeys, loadSettings, saveSettings } from './store'
 
 type Props = {
   open: boolean
@@ -49,6 +49,8 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
   const [rateInput, setRateInput] = useState('')
   const [rateOutput, setRateOutput] = useState('')
   const [rateCurrency, setRateCurrency] = useState<'usd' | 'jpy'>('usd')
+  // 既定は保存しない。github.io は同一アカウントの全 Pages とオリジンを共有するため。
+  const [persistKey, setPersistKey] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
@@ -135,26 +137,32 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
       if (addMode === 'existing-provider') {
         const source = models.find((m) => m.id === sourceModelId)
         if (!source) throw new Error('参照元のモデルを選択してください')
-        await addModelFromSource({
-          sourceModelId,
-          provider: source.provider,
-          modelId,
-          name,
-          rate: buildRate(),
-        })
+        await addModelFromSource(
+          {
+            sourceModelId,
+            provider: source.provider,
+            modelId,
+            name,
+            rate: buildRate(),
+          },
+          persistKey,
+        )
       } else {
         if (!apiKey.trim()) throw new Error('API キーを入力してください')
         if (requiresApiBase(provider) && !apiBase.trim()) {
           throw new Error('openai-compatible では API Base URL が必須です')
         }
-        await addModel({
-          name,
-          provider,
-          modelId,
-          apiKey: apiKey.trim(),
-          apiBase: apiBase.trim() || null,
-          rate: buildRate(),
-        })
+        await addModel(
+          {
+            name,
+            provider,
+            modelId,
+            apiKey: apiKey.trim(),
+            apiBase: apiBase.trim() || null,
+            rate: buildRate(),
+          },
+          persistKey,
+        )
       }
       setApiKey('')
       resetForm()
@@ -202,8 +210,11 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
             {mode === 'static' ? (
               <>
                 <strong>静的モード</strong>
-                — サーバーが無いため、API キーはこのブラウザの localStorage
-                に保存し、プロバイダーへ直接送信します。共用端末では使わないでください。
+                — サーバーが無いため、API キーはこのブラウザからプロバイダーへ直接送られます。
+                <br />
+                既定では<strong>キーを保存しません</strong>（このタブを閉じるまでのメモリ保持）。
+                <code>*.github.io</code> は同じアカウントの全 Pages とオリジンを共有するため、
+                localStorage に置くと他のページからも読めてしまうためです。
               </>
             ) : mode === 'server' ? (
               <>
@@ -440,9 +451,45 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
             </div>
           </fieldset>
 
+          {mode === 'static' && (
+            <label className="persist">
+              <input
+                type="checkbox"
+                checked={persistKey}
+                onChange={(e) => setPersistKey(e.target.checked)}
+              />
+              <span>
+                API キーをこのブラウザに保存する
+                <small>
+                  チェックしないとタブを閉じた時点で消えます。個人端末で毎回入力したくない
+                  場合だけ有効にしてください。
+                </small>
+              </span>
+            </label>
+          )}
+
           <button type="button" className="btn" disabled={busy || !effectiveModelId} onClick={handleAdd}>
             {busy ? '追加中…' : 'このモデルを追加'}
           </button>
+
+          {mode === 'static' && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={async () => {
+                const n = forgetPersistedKeys()
+                await refresh()
+                onModelsChanged()
+                setError(
+                  n > 0
+                    ? `${n} 件の保存済みキーを localStorage から削除しました（このタブでは引き続き使えます）`
+                    : '保存済みのキーはありませんでした',
+                )
+              }}
+            >
+              保存済みキーを localStorage から削除
+            </button>
+          )}
         </div>
       </div>
     </div>

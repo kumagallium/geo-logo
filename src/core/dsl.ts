@@ -13,60 +13,92 @@ import { z } from 'zod'
  *    「プリミティブ → group（1段）→ part」の逐次ステップに平坦化している。
  */
 
-const id = z.string().min(1).describe('一意な識別子（例: c1, bar2）')
+/**
+ * 信頼境界の定義。
+ *
+ * この DSL は LLM の出力をそのまま受け取り、生成した SVG は
+ * dangerouslySetInnerHTML でページへ注入される。静的モードでは同一オリジンの
+ * localStorage に API キーが載るため、ここを抜けられると即キー漏洩になる。
+ * したがって「markup に到達しうる文字列」は形を限定し、数値は範囲を切る。
+ */
+
+/** id は SVG の属性値になるので英数字・ハイフン・アンダースコアのみ */
+const id = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, 'id は英数字・ハイフン・アンダースコアのみ')
+  .describe('一意な識別子（例: c1, bar2）')
+
+/** 参照も id と同じ形でなければならない */
+const ref = id
+
+/** 色は 16 進表記のみ。任意文字列を許すと属性から抜け出せる */
+const hexColor = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, '色は #rgb / #rrggbb 形式のみ')
+
+// 幾何値の上限。モジュール単位なので、この範囲を超える設計は実用上ありえない。
+// 上限が無いと NaN / 1e9 のような値でソルバーが発散し、巨大な SVG でブラウザが固まる。
+const COORD_LIMIT = 500
+const SIZE_LIMIT = 500
+
+const coord = z.number().finite().min(-COORD_LIMIT).max(COORD_LIMIT)
+const size = z.number().finite().positive().max(SIZE_LIMIT)
+const angle = z.number().finite().min(-1440).max(1440)
 
 export const circleSchema = z.object({
   kind: z.literal('circle'),
   id,
-  cx: z.number(),
-  cy: z.number(),
-  r: z.number().positive(),
+  cx: coord,
+  cy: coord,
+  r: size,
   pinned: z.boolean().optional().describe('true なら中心座標を一切動かさない（スナップも制約解決も対象外）'),
 })
 
 export const ringSchema = z.object({
   kind: z.literal('ring'),
   id,
-  cx: z.number(),
-  cy: z.number(),
-  r: z.number().positive().describe('外周半径'),
-  w: z.number().positive().describe('線幅（外周から内側へ）'),
+  cx: coord,
+  cy: coord,
+  r: size.describe('外周半径'),
+  w: size.describe('線幅（外周から内側へ）'),
   pinned: z.boolean().optional(),
 })
 
 export const barSchema = z.object({
   kind: z.literal('bar'),
   id,
-  x1: z.number(),
-  y1: z.number(),
-  x2: z.number(),
-  y2: z.number(),
-  w: z.number().positive().describe('太さ'),
+  x1: coord,
+  y1: coord,
+  x2: coord,
+  y2: coord,
+  w: size.describe('太さ'),
   cap: z.enum(['butt', 'round']).default('butt'),
-  fromRef: z.string().optional().describe('始点を他シェイプの中心に束縛（制約解決後に反映）'),
-  toRef: z.string().optional().describe('終点を他シェイプの中心に束縛'),
+  fromRef: ref.optional().describe('始点を他シェイプの中心に束縛（制約解決後に反映）'),
+  toRef: ref.optional().describe('終点を他シェイプの中心に束縛'),
 })
 
 export const rectSchema = z.object({
   kind: z.literal('rect'),
   id,
-  cx: z.number(),
-  cy: z.number(),
-  w: z.number().positive(),
-  h: z.number().positive(),
-  radius: z.number().min(0).optional().describe('角丸半径'),
-  rotate: z.number().optional().describe('中心まわりの回転角（度）'),
+  cx: coord,
+  cy: coord,
+  w: size,
+  h: size,
+  radius: z.number().finite().min(0).max(SIZE_LIMIT).optional().describe('角丸半径'),
+  rotate: angle.optional().describe('中心まわりの回転角（度）'),
   pinned: z.boolean().optional(),
 })
 
 export const wedgeSchema = z.object({
   kind: z.literal('wedge'),
   id,
-  cx: z.number(),
-  cy: z.number(),
-  r: z.number().positive(),
-  a0: z.number().describe('開始角（度）'),
-  a1: z.number().describe('終了角（度）。a0 < a1'),
+  cx: coord,
+  cy: coord,
+  r: size,
+  a0: angle.describe('開始角（度）'),
+  a1: angle.describe('終了角（度）。a0 < a1'),
   pinned: z.boolean().optional(),
 })
 
@@ -75,7 +107,7 @@ export const polySchema = z.object({
   id,
   // タプルではなくオブジェクト配列。JSON Schema の `items: [..]` 形は
   // structured output で拒否されることがあるため。
-  points: z.array(z.object({ x: z.number(), y: z.number() })).min(3),
+  points: z.array(z.object({ x: coord, y: coord })).min(3).max(64),
 })
 
 export const shapeSchema = z.discriminatedUnion('kind', [
@@ -90,55 +122,61 @@ export const shapeSchema = z.discriminatedUnion('kind', [
 export const constraintSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('tangent'),
-    a: z.string(),
-    b: z.string(),
+    a: ref,
+    b: ref,
     mode: z.enum(['external', 'internal']).default('external'),
   }).describe('2 円を接する位置に補正する'),
-  z.object({ type: z.literal('concentric'), a: z.string(), b: z.string() }),
-  z.object({ type: z.literal('align'), ids: z.array(z.string()).min(2), axis: z.enum(['x', 'y']) })
+  z.object({ type: z.literal('concentric'), a: ref, b: ref }),
+  z.object({ type: z.literal('align'), ids: z.array(ref).min(2).max(64), axis: z.enum(['x', 'y']) })
     .describe('axis:"x" は cx を揃える（＝縦一直線に並ぶ）'),
-  z.object({ type: z.literal('onCircle'), point: z.string(), circle: z.string() })
+  z.object({ type: z.literal('onCircle'), point: ref, circle: ref })
     .describe('point の中心を circle の円周上に乗せる'),
 ])
 
 export const stepSchema = z.object({
   op: z.enum(['add', 'sub', 'intersect']),
-  ref: z.string().describe('シェイプ id、または group id'),
+  ref: ref.describe('シェイプ id、または group id'),
 })
 
 export const groupSchema = z.object({
   id,
-  steps: z.array(stepSchema).min(1),
+  steps: z.array(stepSchema).min(1).max(64),
 })
 
 export const partSchema = z.object({
   id,
-  steps: z.array(stepSchema).min(1),
+  steps: z.array(stepSchema).min(1).max(64),
   fill: z.enum(['primary', 'secondary', 'accent']).default('primary'),
   mirror: z.enum(['none', 'vertical', 'horizontal']).default('none')
     .describe('vertical は x=0 を軸に左右対称化（半分だけ描いて反転できる）'),
 })
 
+// 表示用テキストは SVG の <title> / aria-label に入る。render.ts でエスケープするが、
+// 長さも切っておく（巨大文字列でのメモリ圧迫を防ぐ）。
+const displayText = z.string().max(400)
+
 export const designSchema = z.object({
-  name: z.string(),
-  concept: z.string().describe('設計意図を 1〜3 文で'),
-  module: z.number().positive().default(64).describe('1 モジュールの px 値'),
+  name: displayText,
+  concept: z.string().max(2000).describe('設計意図を 1〜3 文で'),
+  module: z.number().finite().positive().max(1024).default(64).describe('1 モジュールの px 値'),
   grid: z.enum(['golden', 'sqrt2', 'square', 'isometric']).default('golden'),
   palette: z.object({
-    primary: z.string().default('#111111'),
-    secondary: z.string().default('#8A8A8A'),
-    accent: z.string().default('#C2410C'),
-    background: z.string().default('#FFFFFF'),
+    primary: hexColor.default('#111111'),
+    secondary: hexColor.default('#8A8A8A'),
+    accent: hexColor.default('#C2410C'),
+    background: hexColor.default('#FFFFFF'),
   }).default({
     primary: '#111111',
     secondary: '#8A8A8A',
     accent: '#C2410C',
     background: '#FFFFFF',
   }),
-  shapes: z.array(shapeSchema).min(1),
-  constraints: z.array(constraintSchema).default([]),
-  groups: z.array(groupSchema).default([]),
-  parts: z.array(partSchema).min(1),
+  // 上限は「実用上ありえない規模」の線引き。ブーリアン演算は O(n²) 的に効くので、
+  // 際限なく受け取るとブラウザが固まる。
+  shapes: z.array(shapeSchema).min(1).max(64),
+  constraints: z.array(constraintSchema).max(128).default([]),
+  groups: z.array(groupSchema).max(32).default([]),
+  parts: z.array(partSchema).min(1).max(16),
 })
 
 export type Circle = z.infer<typeof circleSchema>
