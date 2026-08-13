@@ -1,0 +1,41 @@
+{
+  "name": "geo-logo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "dev": "concurrently -n web,api -c cyan,magenta \"vite\" \"pnpm dev:server\"",
+    "dev:server": "tsx watch src/server/index.ts",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.110",
+    "@ai-sdk/google": "^3.0.108",
+    "@ai-sdk/openai": "^3.0.96",
+    "@ai-sdk/openai-compatible": "^2.0.67",
+    "@hono/node-server": "^1.13.7",
+    "ai": "^6.0.253",
+    "hono": "^4.13.2",
+    "paper": "^0.12.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "dotenv": "^16.4.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
