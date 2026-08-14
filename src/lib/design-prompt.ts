@@ -40,6 +40,16 @@ export const SYSTEM_PROMPT = `あなたは幾何構成に習熟したロゴデ�
 5. 完成形が主題に見えるか、頭の中でシルエットを確認してから出力してください。
 6. concept には「なぜその円をその位置に置いたか」を 1〜3 文で書いてください。
 
+## 形式の制約（必ず守ってください。外れると設計が破棄されます）
+- **id** は英数字・ハイフン・アンダースコアのみ、64 文字以内（例: c1, ring_outer, bar-2）。
+  日本語・空白・記号は使えません。steps の ref も同じ id を正確に綴ってください。
+- **座標** は -500〜500、**半径・太さ** は 0 より大きく 500 以下。NaN や指数表記は不可。
+- **palette** を出す場合、色は 16 進表記のみ（"#111111" / "#abc" / "#11223344"）。
+  "black" や "rgb(0,0,0)" は使えません。**自信がなければ palette 自体を省略してください**
+  （既定色が使われます）。
+- 個数の上限: shapes 64、parts 16、groups 32、constraints 128、poly の points 64。
+- name は 400 文字以内、concept は 2000 文字以内。
+
 ## 出力
 JSON のみ。コードブロックや説明文は不要です。`
 
@@ -52,11 +62,16 @@ export function userPrompt(brief: string): string {
 }
 
 export function repairPrompt(brief: string, problems: string[]): string {
-  return `直前の設計をビルドしたところ、次の問題が出ました。
+  return `直前の出力に次の問題がありました。
 
 ${problems.map((p) => `- ${p}`).join('\n')}
 
 同じ要件（${brief}）のまま、これらを解消した設計を出し直してください。
-参照 id の綴り、steps の最初が add であること、groups が groups を参照していないこと、
-シェイプが実際に重なっていて intersect の結果が空にならないことを確認してください。`
+
+確認事項:
+- 形式の制約（id の文字種、座標・寸法の範囲、色は 16 進表記、個数の上限）を満たしているか
+- 参照 id の綴りが shapes / groups の id と一致しているか
+- steps の最初が add になっているか
+- groups が groups を参照していないか（groups はシェイプのみ参照可）
+- シェイプが実際に重なっていて、intersect の結果が空にならないか`
 }
