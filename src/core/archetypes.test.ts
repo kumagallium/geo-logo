@@ -27,7 +27,7 @@ function paramGrid(): ArchetypeParams[] {
           for (const span of [45, 180, 330]) {
             for (const orientation of [0, 90, 180]) {
               for (const accent of [false, true]) {
-                out.push({ archetype, ratio, weight, count, span, orientation, accent })
+                out.push({ archetype, ratio, weight, count, span, orientation, accent, enclosure: 'none', repeat: 1 })
               }
             }
           }
@@ -79,6 +79,8 @@ describe('アーキタイプ', () => {
       span: 180,
       orientation: 0,
       accent: false,
+      enclosure: 'none',
+      repeat: 1,
     }
     const signatures = new Set<string>()
     for (const archetype of ARCHETYPES) {
@@ -98,6 +100,8 @@ describe('アーキタイプ', () => {
         archetype: 'leaf-stem',
         ratio: 'golden',
         weight: 'regular',
+        enclosure: 'none',
+        repeat: 1,
         count: 3,
         span: 90,
         orientation: 0,
@@ -151,5 +155,71 @@ describe('ARCHETYPE_FAMILIES', () => {
 
   it('空の系統がない', () => {
     for (const f of ARCHETYPE_FAMILIES) expect(f.members.length).toBeGreaterThan(0)
+  })
+})
+
+describe('囲いと反復', () => {
+  // 型はモチーフでしかない。囲いと反復が付いて初めて紋になるので、
+  // どの型でもこの二つが壊れずに効くことを担保する。
+  const base: Omit<ArchetypeParams, 'archetype' | 'enclosure' | 'repeat'> = {
+    ratio: 'golden',
+    weight: 'regular',
+    count: 3,
+    span: 180,
+    orientation: 0,
+    accent: false,
+  }
+
+  it('どの型でも囲い・反復の組み合わせが図形を壊さない', () => {
+    const failures: string[] = []
+    for (const archetype of ARCHETYPES) {
+      for (const enclosure of ['none', 'ring', 'double'] as const) {
+        for (const repeat of [1, 3, 4] as const) {
+          const label = `${archetype}/${enclosure}/${repeat}`
+          try {
+            const r = compile(
+              buildFromArchetype({
+                name: 'x',
+                concept: 'x',
+                params: { ...base, archetype, enclosure, repeat },
+              }),
+            )
+            const ink = r.built.parts.reduce((n, p) => n + p.pathData.length, 0)
+            if (ink === 0) failures.push(`${label}: 空`)
+            // 囲いを付けたら、それが最大寸法でなければならない（溢れていない）
+            if (enclosure !== 'none') {
+              const { width, height } = r.built.artBounds
+              const ratio = Math.max(width, height) / Math.min(width, height)
+              if (ratio > 1.02) failures.push(`${label}: 輪から溢れている（${ratio.toFixed(2)}）`)
+            }
+          } catch (err) {
+            failures.push(`${label}: ${err instanceof Error ? err.message : String(err)}`)
+          }
+        }
+      }
+    }
+    expect(failures.join('\n  ')).toBe('')
+  }, 120_000)
+
+  it('反復すると図形が増える（手順を並べただけで消えていない）', () => {
+    const one = compile(
+      buildFromArchetype({
+        name: 'x',
+        concept: 'x',
+        params: { ...base, archetype: 'leaf', enclosure: 'none', repeat: 1 },
+      }),
+    )
+    const three = compile(
+      buildFromArchetype({
+        name: 'x',
+        concept: 'x',
+        params: { ...base, archetype: 'leaf', enclosure: 'none', repeat: 3 },
+      }),
+    )
+    // intersect は積み上がった図形に効くので、単純に手順を並べると
+    // 2 つ目のコピーが 1 つ目を削って形が消える。パーツを分けて防いでいる
+    expect(three.built.parts.length).toBe(3)
+    expect(one.built.parts.length).toBe(1)
+    expect(three.built.artBounds.width).toBeGreaterThan(one.built.artBounds.width)
   })
 })

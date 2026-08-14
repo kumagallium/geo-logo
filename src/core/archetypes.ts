@@ -200,6 +200,30 @@ export const archetypeParamsSchema = z.object({
     .default(0)
     .describe('全体の回転角（度）。0=標準の向き。90 刻みで考えるとよい'),
   accent: z.boolean().default(false).describe('true なら副要素をアクセント色にする'),
+  /**
+   * 囲い。家紋の基本構造は「丸に◯◯」で、モチーフ単体では紋にならない。
+   * 素の 2 図形で終わると、形ではあってもマークには見えない。
+   */
+  enclosure: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      const k = typeof v === 'string' ? v.trim().toLowerCase() : ''
+      return k === 'ring' || k === 'double' ? (k as 'ring' | 'double') : ('none' as const)
+    })
+    .describe('none / ring（丸に）/ double（二重丸に）'),
+  /**
+   * モチーフの反復数。三つ盛・三つ寄せのように、同じ形を等配置すると
+   * 律動が生まれて紋になる。1 なら反復しない。
+   */
+  repeat: z
+    .union([z.number(), z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      const n = typeof v === 'string' ? Number.parseInt(v, 10) : v
+      return n === 3 || n === 4 ? n : 1
+    })
+    .describe('1 / 3（三つ盛）/ 4'),
 })
 
 export type ArchetypeParams = z.infer<typeof archetypeParamsSchema>
@@ -558,29 +582,162 @@ export type ArchetypePlan = {
  * 生成されるのは「幾何として成立し、要素が結ばれ、比例が揃った」設計に限られる。
  * モデルはここへ至る分類（どの型か・どの比例か）だけを担う。
  */
+/** シェイプを縮小して移動する。反復配置に使う。 */
+function placeShapes(shapes: Shape[], scale: number, dx: number, dy: number, tag: string): Shape[] {
+  const at = (x: number, y: number) => ({ x: round(x * scale + dx), y: round(y * scale + dy) })
+  const s = (v: number) => round(v * scale)
+
+  return shapes.map((sh): Shape => {
+    const id = `${sh.id}${tag}`
+    switch (sh.kind) {
+      case 'circle': {
+        const c = at(sh.cx, sh.cy)
+        return { ...sh, id, cx: c.x, cy: c.y, r: s(sh.r) }
+      }
+      case 'ring': {
+        const c = at(sh.cx, sh.cy)
+        return { ...sh, id, cx: c.x, cy: c.y, r: s(sh.r), w: s(sh.w) }
+      }
+      case 'wedge': {
+        const c = at(sh.cx, sh.cy)
+        return { ...sh, id, cx: c.x, cy: c.y, r: s(sh.r) }
+      }
+      case 'arc': {
+        const c = at(sh.cx, sh.cy)
+        return { ...sh, id, cx: c.x, cy: c.y, r: s(sh.r), w: s(sh.w) }
+      }
+      case 'rect': {
+        const c = at(sh.cx, sh.cy)
+        return { ...sh, id, cx: c.x, cy: c.y, w: s(sh.w), h: s(sh.h) }
+      }
+      case 'bar': {
+        const a = at(sh.x1, sh.y1)
+        const b = at(sh.x2, sh.y2)
+        return { ...sh, id, x1: a.x, y1: a.y, x2: b.x, y2: b.y, w: s(sh.w) }
+      }
+      case 'poly':
+        return { ...sh, id, points: sh.points.map((q) => at(q.x, q.y)) }
+      case 'contour':
+        return {
+          ...sh,
+          id,
+          segments: sh.segments.map((g) => ({
+            ...g,
+            ...at(g.x, g.y),
+            r: g.r === undefined ? undefined : s(g.r),
+          })),
+        }
+    }
+  })
+}
+
+/** 原点からの最遠点。囲いに収めるための粗い見積もり。 */
+function extentOf(shapes: Shape[]): number {
+  const h = (x: number, y: number) => Math.hypot(x, y)
+  let max = 0
+  for (const sh of shapes) {
+    switch (sh.kind) {
+      case 'circle':
+      case 'wedge':
+        max = Math.max(max, h(sh.cx, sh.cy) + sh.r)
+        break
+      case 'ring':
+      case 'arc':
+        max = Math.max(max, h(sh.cx, sh.cy) + sh.r + sh.w / 2)
+        break
+      case 'rect':
+        max = Math.max(max, h(Math.abs(sh.cx) + sh.w / 2, Math.abs(sh.cy) + sh.h / 2))
+        break
+      case 'bar':
+        max = Math.max(max, h(sh.x1, sh.y1) + sh.w / 2, h(sh.x2, sh.y2) + sh.w / 2)
+        break
+      case 'poly':
+        for (const q of sh.points) max = Math.max(max, h(q.x, q.y))
+        break
+      case 'contour':
+        for (const g of sh.segments) max = Math.max(max, h(g.x, g.y))
+        break
+    }
+  }
+  return max
+}
+
 export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
   const params = archetypeParamsSchema.parse(plan.params)
   const built = BUILDERS[params.archetype](params)
-  const shapes = rotateShapes(built.shapes, params.orientation)
-  const constraints = rotateConstraints(built.constraints, params.orientation)
+  let shapes = rotateShapes(built.shapes, params.orientation)
+  let constraints = rotateConstraints(built.constraints, params.orientation)
+  let steps = built.steps
+
+  // 反復。同じ形を等配置すると律動が生まれる（三つ盛・四つ寄せ）。
+  //
+  // コピーごとに別パーツにするのが要点。ブーリアン演算は積み上がった図形
+  // 全体に効くので、intersect を含む型の手順を単純に並べると、2 つ目の
+  // コピーが 1 つ目を削ってしまう（実際に葉と山が壊れた）。
+  let groups: Array<Array<{ op: 'add' | 'sub' | 'intersect'; ref: string }>> = [steps]
+  if (params.repeat > 1) {
+    const n = params.repeat
+    const scale = n === 3 ? 0.5 : 0.44
+    const orbit = round(R * (n === 3 ? 0.62 : 0.66))
+    const copies: Shape[] = []
+    groups = []
+    for (let i = 0; i < n; i++) {
+      // 上を起点に等配置する。下向き起点だと逆さに見える
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / n
+      const tag = `x${i}`
+      copies.push(
+        ...placeShapes(shapes, scale, round(Math.cos(a) * orbit), round(Math.sin(a) * orbit), tag),
+      )
+      groups.push(steps.map((st) => ({ ...st, ref: `${st.ref}${tag}` })))
+    }
+    shapes = copies
+    // 反復すると元の参照が消えるので、制約は畳む
+    constraints = []
+  }
+
   const accent = new Set(params.accent ? (built.accentIds ?? []) : [])
+  const parts: LogoDesign['parts'] = []
 
   // アクセントを使うときだけ part を分ける（塗り分けは part 単位のため）
-  const mainSteps = built.steps.filter((s) => !accent.has(s.ref))
-  const accentSteps = built.steps.filter((s) => accent.has(s.ref))
+  groups.forEach((g, i) => {
+    const main = g.filter((st) => !accent.has(st.ref))
+    if (main.length > 0) parts.push({ id: `mark${i || ''}`, steps: main, fill: 'primary', mirror: 'none' })
+    const acc = g.filter((st) => accent.has(st.ref))
+    if (acc.length > 0) {
+      parts.push({
+        id: `accent${i || ''}`,
+        steps: [{ ...acc[0], op: 'add' as const }, ...acc.slice(1)],
+        fill: 'accent',
+        mirror: 'none',
+      })
+    }
+  })
 
-  const parts: LogoDesign['parts'] =
-    accentSteps.length > 0 && mainSteps.length > 0
-      ? [
-          { id: 'mark', steps: mainSteps, fill: 'primary', mirror: 'none' },
-          {
-            id: 'accent',
-            steps: [{ ...accentSteps[0], op: 'add' as const }, ...accentSteps.slice(1)],
-            fill: 'accent',
-            mirror: 'none',
-          },
-        ]
-      : [{ id: 'mark', steps: built.steps, fill: 'primary', mirror: 'none' }]
+  // 囲い。家紋の基本構造は「丸に◯◯」で、モチーフ単体では紋にならない
+  if (params.enclosure !== 'none') {
+    const w = strokeOf(R, params.weight)
+    const outer = round(R * 1.5)
+    // モチーフが輪から溢れると紋にならないので、内側に収まるまで縮める
+    const inner = outer - w / 2 - w * 0.6
+    const extent = extentOf(shapes)
+    if (extent > inner) {
+      shapes = placeShapes(shapes, round(inner / extent), 0, 0, '')
+      constraints = []
+    }
+
+    const rings: Shape[] = [{ kind: 'ring', id: 'encl', cx: 0, cy: 0, r: outer, w }]
+    if (params.enclosure === 'double') {
+      // 内側は細く。同じ太さで二本引くと重く、輪の内外が読めなくなる
+      rings.push({ kind: 'ring', id: 'encl2', cx: 0, cy: 0, r: round(outer - w * 1.8), w: round(w * 0.45) })
+    }
+    shapes = [...shapes, ...rings]
+    parts.push({
+      id: 'enclosure',
+      steps: rings.map((r) => ({ op: 'add' as const, ref: r.id })),
+      fill: 'primary',
+      mirror: 'none',
+    })
+  }
 
   return {
     name: plan.name,
