@@ -21,8 +21,8 @@ importers:
         specifier: ^2.0.67
         version: 2.0.67(zod@4.4.3)
       '@hono/node-server':
-        specifier: ^1.13.7
-        version: 1.19.17(hono@4.13.2)
+        specifier: ^2.1.0
+        version: 2.1.0(hono@4.13.2)
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -523,9 +523,9 @@ packages:
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
     engines: {node: '>=14'}
 
-  '@hono/node-server@1.19.17':
-    resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
-    engines: {node: '>=18.14.1'}
+  '@hono/node-server@2.1.0':
+    resolution: {integrity: sha512-XovyyCCnBzW+zKu+z/zq8hwNs4KOR5rEMAOxo2f40Q5xoOI37IMm6MIg2COOUtUApo0i6850MTBKH2u4QLGIqg==}
+    engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
 
@@ -1569,7 +1569,7 @@ snapshots:
 
   '@fastify/busboy@2.1.1': {}
 
-  '@hono/node-server@1.19.17(hono@4.13.2)':
+  '@hono/node-server@2.1.0(hono@4.13.2)':
     dependencies:
       hono: 4.13.2
 

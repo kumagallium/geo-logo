@@ -24,7 +24,7 @@
     "@ai-sdk/google": "^3.0.108",
     "@ai-sdk/openai": "^3.0.96",
     "@ai-sdk/openai-compatible": "^2.0.67",
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^2.1.0",
     "@tauri-apps/api": "^2",
     "ai": "^6.0.253",
     "hono": "^4.13.2",
