@@ -22,7 +22,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.110",
     "@ai-sdk/google": "^3.0.108",
-    "@ai-sdk/openai": "^3.0.96",
+    "@ai-sdk/openai": "^4.0.37",
     "@ai-sdk/openai-compatible": "^2.0.67",
     "@hono/node-server": "^1.13.7",
     "@tauri-apps/api": "^2",
