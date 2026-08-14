@@ -333,6 +333,47 @@ function snapRadius(seg: ContourSegment): ContourSegment {
 }
 
 /**
+ * 輪郭の複雑さ。向きの変化の総量（絶対曲率の積分）で測る。
+ *
+ * 円は大きさによらず 2π になり、こぶや切れ込みが増えるほど大きくなる。
+ * 「円弧を何本必要とするか」に直結する量で、大きさとは独立している。
+ */
+export function contourComplexity(points: Vec[]): number {
+  const n = points.length
+  if (n < 3) return 0
+
+  let total = 0
+  let prev = Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x)
+  for (let i = 1; i < n; i++) {
+    const a = points[i]
+    const b = points[(i + 1) % n]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    if (Math.hypot(dx, dy) < 1e-9) continue
+    const dir = Math.atan2(dy, dx)
+    total += Math.abs(angleDelta(prev, dir))
+    prev = dir
+  }
+  return total
+}
+
+/**
+ * 輪郭ごとの円弧の本数を決める。
+ *
+ * 大きさで配ってはいけない。小さくても複雑な輪郭（腕と脚の間の抜きなど）は
+ * 本数が足りないと形が潰れ、大きくても単純な輪郭は本数を余らせる。
+ * 曲がりの総量で配ると、必要な場所に必要なだけ回る。
+ */
+export function allocateArcs(contours: Vec[][], total: number, min = 3): number[] {
+  if (contours.length === 0) return []
+  const weights = contours.map((c) => Math.max(contourComplexity(c), 0.1))
+  const sum = weights.reduce((a, b) => a + b, 0)
+  // 最低本数を先に確保し、残りを重みで配る
+  const pool = Math.max(total - min * contours.length, 0)
+  return weights.map((w) => min + Math.round((pool * w) / sum))
+}
+
+/**
  * 点列をモジュール単位・原点中心へ正規化する。
  *
  * 素材の座標系（SVG の viewBox は 0〜1024 など様々）をそのまま使うと、

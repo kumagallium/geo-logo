@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { compile } from './index'
 import {
+  allocateArcs,
+  contourComplexity,
   fitToModule,
   parseTransform,
   sampleContours,
@@ -155,5 +157,52 @@ describe('sampleContoursFromSvg', () => {
       '<svg><g transform="scale(2)"><path d="M 0 0 L 4 0 L 4 4 Z"/></g>' +
       '<g transform="scale(3)"><path d="M 8 0 L 9 0 L 9 1 Z"/></g></svg>'
     expect(sampleContoursFromSvg(svg, 60).length).toBeGreaterThan(0)
+  })
+})
+
+describe('contourComplexity', () => {
+  /**
+   * 「円弧を何本必要とするか」は大きさではなく曲がりの総量で決まる。
+   * 大きさで配ると、小さくても複雑な抜き（腕と脚の間など）が潰れる。
+   */
+  it('円は大きさによらず 2π になる', () => {
+    expect(contourComplexity(circlePoints(1))).toBeCloseTo(Math.PI * 2, 1)
+    expect(contourComplexity(circlePoints(50))).toBeCloseTo(Math.PI * 2, 1)
+  })
+
+  it('こぶのある形は円より大きくなる', () => {
+    const wavy = Array.from({ length: 360 }, (_, i) => {
+      const t = (i / 360) * Math.PI * 2
+      const r = 2 + 0.6 * Math.sin(t * 6)
+      return { x: Math.cos(t) * r, y: Math.sin(t) * r }
+    })
+    expect(contourComplexity(wavy)).toBeGreaterThan(contourComplexity(circlePoints(2)) * 1.5)
+  })
+
+  it('点が足りなければ 0', () => {
+    expect(contourComplexity([{ x: 0, y: 0 }])).toBe(0)
+  })
+})
+
+describe('allocateArcs', () => {
+  it('複雑な輪郭へ多く配る', () => {
+    const simple = circlePoints(3)
+    const complex = Array.from({ length: 360 }, (_, i) => {
+      const t = (i / 360) * Math.PI * 2
+      const r = 1 + 0.5 * Math.sin(t * 8)
+      return { x: Math.cos(t) * r, y: Math.sin(t) * r }
+    })
+    // 小さいほうが複雑。大きさで配っていたら逆になる
+    const [a, b] = allocateArcs([simple, complex], 40)
+    expect(b).toBeGreaterThan(a)
+  })
+
+  it('どの輪郭にも最低本数を確保する', () => {
+    const quota = allocateArcs([circlePoints(3), circlePoints(0.2)], 8, 3)
+    for (const q of quota) expect(q).toBeGreaterThanOrEqual(3)
+  })
+
+  it('輪郭が無ければ空', () => {
+    expect(allocateArcs([], 20)).toEqual([])
   })
 })

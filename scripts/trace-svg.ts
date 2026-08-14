@@ -1,14 +1,14 @@
 /**
  * SVG のシルエットを円弧の列へ還元して、幾何ロゴとして描き直す。
  *
- *   pnpm tsx scripts/trace-svg.ts input.svg 出力名 [外形の円弧本数]
+ *   pnpm tsx scripts/trace-svg.ts input.svg 出力名 [円弧の総本数]
  *
  * 円弧の本数が抽象度そのもの。多いとトレースした絵、少ないとロゴになる。
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Shape, Step } from '../src/core/index.js'
 import { compile } from '../src/core/index.js'
-import { fitToModule, sampleContoursFromSvg, traceArcs } from '../src/core/trace.js'
+import { allocateArcs, fitToModule, sampleContoursFromSvg, traceArcs } from '../src/core/trace.js'
 
 const [file, out = 'trace', arcs = '12'] = process.argv.slice(2)
 const svg = readFileSync(file, 'utf8')
@@ -23,22 +23,16 @@ const shapes: Shape[] = []
 const steps: Step[] = []
 const budget = Number(arcs)
 
+// 本数は大きさではなく曲がりの総量で配る。小さくても複雑な抜きが潰れないように
+const quota = allocateArcs(contours, budget)
+
 contours.forEach((points, i) => {
-  // 抜きは外形より小さいので、本数も比例して減らす。同じ本数を割り当てると
-  // 小さな穴に無駄な情報量が載り、抽象度が揃わない。
-  const scale = i === 0 ? 1 : Math.min(1, extent(points) / extent(contours[0]))
-  const { segments } = traceArcs(points, { maxArcs: Math.max(3, Math.round(budget * scale)) })
+  const { segments } = traceArcs(points, { maxArcs: quota[i] })
   if (segments.length < 3) return
   const id = `c${i}`
   shapes.push({ kind: 'contour', id, segments })
   steps.push({ op: i === 0 ? 'add' : 'sub', ref: id })
 })
-
-function extent(points: { x: number; y: number }[]): number {
-  const xs = points.map((p) => p.x)
-  const ys = points.map((p) => p.y)
-  return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
-}
 
 const result = compile({
   name: out,
