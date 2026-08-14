@@ -13,6 +13,7 @@ import {
   allocateArcs,
   detectCircle,
   fitToModule,
+  harmonizeRadii,
   mirrorPairs,
   mirrorSegments,
   nestingDepth,
@@ -75,6 +76,14 @@ contours.forEach((points, i) => {
   if (segments.length < 3) return
   shapes.push({ kind: 'contour', id, segments })
   steps.push({ op, ref: id })
+})
+
+// マーク全体で使われている半径を、少数の代表値へ揃える。
+// 当てはめの誤差でばらついた値を畳み直すだけなので形はほとんど動かない
+const contourShapes = shapes.filter((x) => x.kind === 'contour')
+const tuned = harmonizeRadii(contourShapes.map((x) => (x.kind === 'contour' ? x.segments : [])))
+contourShapes.forEach((x, i) => {
+  if (x.kind === 'contour') x.segments = tuned.groups[i]
 })
 
 // 外側から順に足し引きする。塗りを全部先に合体させてから抜くと、穴を抜いた

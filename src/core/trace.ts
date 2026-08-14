@@ -133,6 +133,8 @@ export type SvgShape = {
   strokePaint: Paint
   /** 線端を丸めるか（SVG の既定は butt なので false） */
   roundCap: boolean
+  /** 切り抜きの型（clip-path）。無ければ null */
+  clip: { d: string; matrix: Matrix } | null
 }
 
 const NAMED: Record<string, number> = {
@@ -229,6 +231,31 @@ function tagToPathData(tag: string): string | null {
  * 完全な XML 解析はしない。タグの並びを見て `<g>` の開閉で行列のスタックを
  * 積み下ろしするだけで、素材として現れる構造は覆える。
  */
+/**
+ * clipPath の定義を集める。
+ *
+ * 中身は描画されないが、切り抜きの型として要る。無視すると切り抜かれる
+ * はずの部分がはみ出し、空いているべき隙間が埋まる（実測: 丸に竪三つ引で
+ * 縦棒が内側の円からはみ出した）。
+ */
+function collectClips(svgText: string): Map<string, { d: string; matrix: Matrix }> {
+  const out = new Map<string, { d: string; matrix: Matrix }>()
+  for (const m of svgText.matchAll(/<clipPath\b([^>]*)>([\s\S]*?)<\/clipPath>/g)) {
+    const id = attr(`<x${m[1]}>`, 'id')
+    if (!id) continue
+    const own = attr(`<x${m[1]}>`, 'transform')
+    const base = own ? parseTransform(own) : IDENTITY
+    // 型は 1 つの図形に合成する
+    const parts: string[] = []
+    for (const [tag] of m[2].matchAll(/<(?:path|circle|ellipse|rect|polygon|polyline)\b[^>]*>/g)) {
+      const d = tagToPathData(tag)
+      if (d) parts.push(d)
+    }
+    if (parts.length > 0) out.set(id, { d: parts.join(' '), matrix: base })
+  }
+  return out
+}
+
 export function collectShapes(svgText: string): SvgShape[] {
   const out: SvgShape[] = []
   // 変換だけでなく塗りも継承する。<svg fill="none" stroke="#000"> のように
@@ -239,6 +266,8 @@ export function collectShapes(svgText: string): SvgShape[] {
   ]
 
   const SHAPES = /^<(path|circle|ellipse|rect|polygon|polyline)\b/
+  const clips = collectClips(svgText)
+
   // 描画されない要素の中身は落とす。clipPath の中の図形まで拾うと、
   // 切り抜きの型が実体として現れて紋が塗り潰される（実測）
   const body = svgText
@@ -275,6 +304,8 @@ export function collectShapes(svgText: string): SvgShape[] {
     const strokePaint = stroke.trim() === '' ? 'skip' : paintOf(`<x fill="${stroke}"/>`)
     const strokeWidth = strokePaint === 'skip' ? 0 : Math.max(num(width) || 1, 0)
     const cap = attr(tag, 'stroke-linecap') ?? tag.match(/stroke-linecap\s*:\s*([a-z]+)/)?.[1] ?? ''
+    const clipId = (attr(tag, 'clip-path') ?? '').match(/url\(#([^)]+)\)/)?.[1]
+    const clip = clipId ? clips.get(clipId) ?? null : null
     if (paint === 'skip' && strokeWidth <= 0) continue
 
     const rule = attr(tag, 'fill-rule') ?? tag.match(/fill-rule\s*:\s*([a-z]+)/)?.[1] ?? ''
@@ -286,6 +317,7 @@ export function collectShapes(svgText: string): SvgShape[] {
       strokeWidth,
       strokePaint,
       roundCap: cap.trim() === 'round',
+      clip: clip ? { d: clip.d, matrix: multiply(matrix, clip.matrix) } : null,
     })
   }
 
@@ -428,13 +460,24 @@ export function sampleContoursFromSvg(svgText: string, count = 720): TracedConto
       // 図形どうしの位置関係が合わないまま union することになる
       if (el.matrix !== IDENTITY) item.transform(new p.Matrix(...el.matrix))
 
+      // 切り抜きの型があれば、塗りにも線にも掛ける
+      const clipWith = (target: paper.PathItem): paper.PathItem => {
+        if (!el.clip) return target
+        const shape = new p.CompoundPath(el.clip.d)
+        if (el.clip.matrix !== IDENTITY) shape.transform(new p.Matrix(...el.clip.matrix))
+        const cut = target.intersect(shape)
+        target.remove()
+        shape.remove()
+        return cut
+      }
+
       if (el.strokeWidth > 0) {
         // 線幅も変換の拡大率を受ける
         const scale = Math.sqrt(Math.abs(el.matrix[0] * el.matrix[3] - el.matrix[1] * el.matrix[2]))
         const band = strokeToFill(p, item, el.strokeWidth * (scale || 1), el.roundCap)
-        if (band) apply(band, el.strokePaint)
+        if (band) apply(clipWith(band), el.strokePaint)
       }
-      apply(item.clone(), el.paint)
+      apply(clipWith(item.clone()), el.paint)
       item.remove()
     }
     if (!united) return []
@@ -705,6 +748,49 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
 }
 
 const round = (v: number) => Math.round(v * 1000) / 1000
+
+/**
+ * マーク全体で使われている半径を、少数の代表値へ揃える。
+ *
+ * 「円弧が体系に載っていない」という批評への答え。外部の比例体系（黄金比の
+ * 階梯など）へ寄せると形が壊れるが、それは体系が形より後に来ているから。
+ * マーク自身が実際に使っている半径を数え上げて代表値へ寄せれば、体系は
+ * 外から押しつけるものではなく取り出すものになる。
+ *
+ * 家紋のような作図された図形は、もともと少数の半径しか使っていない。
+ * 当てはめの誤差でばらついた値を畳み直すだけなので、形もほとんど動かない。
+ */
+export function harmonizeRadii(
+  groups: ContourSegment[][],
+  tolerance = 0.03,
+): { groups: ContourSegment[][]; radii: number[] } {
+  const values = groups
+    .flat()
+    .map((g) => g.r)
+    .filter((r): r is number => r !== undefined && r > 0)
+    .sort((a, b) => a - b)
+  if (values.length === 0) return { groups, radii: [] }
+
+  // 近い値をまとめて代表値（平均）を作る
+  const clusters: number[][] = [[values[0]]]
+  for (const v of values.slice(1)) {
+    const current = clusters[clusters.length - 1]
+    const mean = current.reduce((a, b) => a + b, 0) / current.length
+    if (Math.abs(v - mean) / mean <= tolerance) current.push(v)
+    else clusters.push([v])
+  }
+  const radii = clusters.map((c) => round(c.reduce((a, b) => a + b, 0) / c.length))
+
+  const nearest = (r: number) =>
+    radii.reduce((best, cand) => (Math.abs(cand - r) < Math.abs(best - r) ? cand : best), radii[0])
+
+  return {
+    groups: groups.map((segs) =>
+      segs.map((g) => (g.r === undefined ? g : { ...g, r: nearest(g.r) })),
+    ),
+    radii,
+  }
+}
 
 export type TraceOptions = {
   /**

@@ -12,6 +12,7 @@ import {
   allocateArcs,
   detectCircle,
   fitToModule,
+  harmonizeRadii,
   mirrorPairs,
   mirrorSegments,
   nestingDepth,
@@ -65,6 +66,13 @@ contours.forEach((points, i) => {
   shapes.push({ kind: 'contour', id: `c${i}`, segments })
   steps.push({ op, ref: `c${i}` })
 })
+// マーク全体で使われている半径を、少数の代表値へ揃える
+const contourShapes = shapes.filter((x) => x.kind === 'contour')
+const tuned = harmonizeRadii(contourShapes.map((x) => (x.kind === 'contour' ? x.segments : [])))
+contourShapes.forEach((x, i) => {
+  if (x.kind === 'contour') x.segments = tuned.groups[i]
+})
+
 const order = shapes.map((_, i) => i).sort((a, b) => depth[a] - depth[b])
 
 const result = compile({
@@ -113,5 +121,7 @@ const lines = shapes.reduce(
 resetProject()
 
 console.log(
-  `${file.split('/').pop()}: 一致率 ${((1 - ratio) * 100).toFixed(2)}% / 円 ${circles} + 円弧 ${total - lines} + 直線 ${lines} / 作図線 ${result.built.construction.length}`,
+  `${file.split('/').pop()}: 一致率 ${((1 - ratio) * 100).toFixed(2)}% / ` +
+    `円 ${circles} + 円弧 ${total - lines} + 直線 ${lines} / ` +
+    `異なる半径 ${tuned.radii.length} 種 / 作図線 ${result.built.construction.length}`,
 )

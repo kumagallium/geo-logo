@@ -5,6 +5,7 @@ import {
   collectShapes,
   contourComplexity,
   fitToModule,
+  harmonizeRadii,
   mirrorAxis,
   mirrorPairs,
   mirrorSegments,
@@ -14,6 +15,7 @@ import {
   sampleContours,
   sampleContoursFromSvg,
   traceArcs,
+  type ContourSegment,
   type Vec,
 } from './trace'
 
@@ -462,5 +464,40 @@ describe('線端の扱い', () => {
     const pts = sampleContoursFromSvg(bar(''), 240)[0].points
     const xs = pts.map((q) => q.x)
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(4, 0)
+  })
+})
+
+describe('harmonizeRadii', () => {
+  /**
+   * 「円弧が体系に載っていない」という批評への答え。外部の比例体系へ寄せると
+   * 形が壊れるが、それは体系が形より後に来ているから。マーク自身が使っている
+   * 半径を数え上げて代表値へ寄せれば、体系は押しつけではなく取り出しになる。
+   * 実測（二つ巴）: 円弧 24 本が半径 5 種に収まり、一致率は 99.83% → 99.81%。
+   */
+  const seg = (r: number): ContourSegment => ({ x: 0, y: 0, r, sweep: true })
+
+  it('近い半径を代表値へまとめる', () => {
+    const { groups, radii } = harmonizeRadii([[seg(2.0), seg(2.01), seg(1.99), seg(5.0)]], 0.03)
+    expect(radii).toHaveLength(2)
+    expect(radii[0]).toBeCloseTo(2, 2)
+    expect(radii[1]).toBeCloseTo(5, 2)
+    // 元の 3 本はすべて同じ値になる
+    const rs = groups[0].map((g) => g.r)
+    expect(new Set(rs).size).toBe(2)
+  })
+
+  it('離れた半径はまとめない', () => {
+    const { radii } = harmonizeRadii([[seg(1), seg(2), seg(4)]], 0.03)
+    expect(radii).toHaveLength(3)
+  })
+
+  it('直線は触らない', () => {
+    const line: ContourSegment = { x: 1, y: 1, sweep: true }
+    const { groups } = harmonizeRadii([[line, seg(2)]])
+    expect(groups[0][0].r).toBeUndefined()
+  })
+
+  it('円弧が無ければ空', () => {
+    expect(harmonizeRadii([[]]).radii).toEqual([])
   })
 })
