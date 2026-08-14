@@ -435,17 +435,20 @@ export function diagnose(result: CompileResult): string[] {
 
   // 小サイズでの成立性。ロゴはファビコンや印刷でも読めなければ使えない。
   const { inkRatio, minStrokeRatio } = result.built
-  if (inkRatio > 0 && inkRatio < 0.12) {
+  // 目安は家紋 390 点の実測（中央値 0.45、四分位 0.39〜0.53）。
+  // 判定は帯そのものではなく、その外側の明らかに外れた領域だけを弾く。
+  // 帯へ寄せるのは作図側の仕事で、ここで弾くと再試行の費用になる。
+  if (inkRatio > 0 && inkRatio < 0.22) {
     problems.push(
       `塗りが外接矩形の ${(inkRatio * 100).toFixed(0)}% しかなく、大半が空白です。` +
         '線を太くするか要素を大きくして、小さいサイズでも形が読めるようにしてください' +
-        '（目安 15〜50%）。',
+        '（家紋の実測は 39〜53%）。',
     )
   }
-  if (inkRatio > 0.92) {
+  if (inkRatio > 0.78) {
     problems.push(
-      `塗りが外接矩形の ${(inkRatio * 100).toFixed(0)}% を占めており、ほぼ単色の塊です。` +
-        'sub で抜くか、要素の関係で形を作ってください。',
+      `塗りが外接矩形の ${(inkRatio * 100).toFixed(0)}% を占めており、塊に寄りすぎています。` +
+        'sub で抜くか、要素の関係で形を作ってください（家紋の実測は 39〜53%）。',
     )
   }
   if (minStrokeRatio !== null && minStrokeRatio < 0.04) {

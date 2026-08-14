@@ -844,6 +844,27 @@ function polygon(n: number, r: number, turn: number): Array<{ x: number; y: numb
   })
 }
 
+/** 組み立てた結果のインク率。測れなければ null。 */
+function inkOf(shapes: Shape[], parts: LogoDesign['parts']): number | null {
+  try {
+    return build(
+      normalize({
+        name: 'probe',
+        concept: '',
+        module: 64,
+        grid: 'golden',
+        palette: { primary: '#000', secondary: '#000', accent: '#000', background: '#fff' },
+        shapes,
+        constraints: [],
+        groups: [],
+        parts,
+      }).design,
+    ).inkRatio
+  } catch {
+    return null
+  }
+}
+
 /**
  * 抜いた結果、形が痩せすぎていないか。
  *
@@ -959,12 +980,20 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
     }
   })
 
+  // 濃すぎる塊は抜きで割る。家紋の実測は中央値 0.45 で、真っ黒な塊は
+  // そもそも紋になっていない。指定が無くても機械的に入れる
+  let counter = params.counter
+  if (counter === 'none' && parts.length > 0) {
+    const ink = inkOf(shapes, parts)
+    if (ink !== null && ink > 0.62) counter = 'core'
+  }
+
   // 抜き。黒の塊を白で割って緩急を出す。囲いより先に入れる（囲いは
   // 割らない。輪まで切ると紋が二つに分かれて読めなくなる）
-  if (params.counter !== 'none' && parts.length > 0) {
+  if (counter !== 'none' && parts.length > 0) {
     const reach = extentOf(shapes)
     const cut: Shape =
-      params.counter === 'slit'
+      counter === 'slit'
         ? {
             kind: 'rect',
             id: 'cut',
@@ -1066,6 +1095,34 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
       ? { ...sh, w: round(Math.min(floor, sh.kind === 'bar' ? floor : sh.r * 0.5)) }
       : sh,
   )
+
+  // インクの量を家紋の帯へ寄せる。
+  //
+  // 家紋 390 点の実測は中央値 0.45、四分位 0.39〜0.53（scripts/kamon-stats.ts）。
+  // 判定を通すだけの構成は 0.12〜0.92 の間で野放しになっていて、痩せた線画も
+  // 真っ黒な塊も等しく通っていた。線を太らせて帯へ寄せる。
+  //
+  // 塗りで出来た形（交差など）は線を持たないので動かない。そちらは抜きと
+  // 囲いで調整する領分で、ここでは触らない。
+  {
+    // 多角形の囲いは線幅を持たず、内側の穴を縮めて太らせるしかない。
+    // ここを外すと、亀甲・角・隅立て角の枠だけ痩せたまま残る
+    const hole = shapes.find((sh) => sh.id === 'enclHole')
+    for (let i = 0; i < 8; i++) {
+      const ink = inkOf(shapes, parts)
+      if (ink === null || ink >= 0.39) break
+      shapes = shapes.map((sh) => {
+        if (sh.kind === 'ring' || sh.kind === 'arc') {
+          return { ...sh, w: round(Math.min(sh.w * 1.18, sh.r * 0.9)) }
+        }
+        if (sh.kind === 'bar') return { ...sh, w: round(sh.w * 1.18) }
+        if (sh === hole && sh.kind === 'poly') {
+          return { ...sh, points: sh.points.map((q) => ({ x: round(q.x * 0.94), y: round(q.y * 0.94) })) }
+        }
+        return sh
+      })
+    }
+  }
 
   return {
     name: plan.name,
