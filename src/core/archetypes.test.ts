@@ -28,7 +28,7 @@ function paramGrid(): ArchetypeParams[] {
           for (const span of [45, 180, 330]) {
             for (const orientation of [0, 90, 180]) {
               for (const accent of [false, true]) {
-                out.push({ archetype, ratio, weight, count, span, orientation, accent, enclosure: 'none', repeat: 1, counter: 'none' })
+                out.push({ archetype, ratio, weight, count, span, orientation, accent, enclosure: 'none', repeat: 1, counter: 'none', detail: 0 })
               }
             }
           }
@@ -83,6 +83,7 @@ describe('アーキタイプ', () => {
       enclosure: 'none',
       repeat: 1,
       counter: 'none',
+      detail: 0,
     }
     const signatures = new Set<string>()
     for (const archetype of ARCHETYPES) {
@@ -105,6 +106,7 @@ describe('アーキタイプ', () => {
         enclosure: 'none',
         repeat: 1,
         counter: 'none',
+        detail: 0,
         count: 3,
         span: 90,
         orientation: 0,
@@ -172,6 +174,7 @@ describe('囲いと反復', () => {
     orientation: 0,
     accent: false,
     counter: 'none',
+    detail: 0,
   }
 
   it('どの型でも囲い・反復の組み合わせが図形を壊さない', () => {
@@ -269,6 +272,7 @@ describe('囲いの名前解決', () => {
             orientation: 0,
             accent: false,
             counter: 'none',
+            detail: 0,
             enclosure,
             repeat: 1,
           },

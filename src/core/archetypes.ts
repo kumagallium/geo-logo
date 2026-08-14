@@ -322,6 +322,22 @@ export const archetypeParamsSchema = z.object({
       return 'none' as const
     })
     .describe('none / slit（横に走る抜け）/ core（中心の覗き）'),
+  /**
+   * 添え。主役のまわりに小さな要素を等配置する。
+   *
+   * 家紋の輪郭数は中央値 10 本、こちらは 2〜4 本しかなかった。要素を闇雲に
+   * 増やすと団子になるが、n 回対称の位置に小さな点を並べる添え方は、
+   * 対称を壊さずに数だけ増やせる（州浜、蛇の目の鋲、七曜）。
+   */
+  detail: z
+    .union([z.number(), z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      const n = typeof v === 'string' ? Number.parseInt(v, 10) : v
+      if (typeof n !== 'number' || !Number.isFinite(n)) return 0
+      return n >= 3 && n <= 12 ? Math.round(n) : 0
+    })
+    .describe('添えの数。0 なし / 3〜12（主役のまわりに小さな点を等配置）'),
 })
 
 export type ArchetypeParams = z.infer<typeof archetypeParamsSchema>
@@ -1019,6 +1035,60 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
     }
   }
 
+  // 添え。主役のまわりに小さな点を等配置する。対称を壊さずに要素数だけ
+  // 増やせる唯一の手（州浜・蛇の目の鋲・七曜）。囲いより先に置いて、
+  // 囲いがこれごと包むようにする
+  if (params.detail >= 3 && parts.length > 0) {
+    const n = params.detail
+    const reach = extentOf(shapes)
+    // 遠くへ置くと外接矩形だけが広がって墨が薄くなる。主役に寄せる
+    const orbit = round(reach * 1.1)
+    const r = round(Math.min((orbit * Math.PI) / n / 1.7, reach * 0.26))
+    if (r > reach * 0.05) {
+      const studs: Shape[] = []
+      for (let i = 0; i < n; i++) {
+        // 上を起点に等配置。軸上に 1 つ来るので左右対称が保たれる
+        const a = -Math.PI / 2 + (i * 2 * Math.PI) / n
+        studs.push({
+          kind: 'circle',
+          id: `stud${i}`,
+          cx: round(Math.cos(a) * orbit),
+          cy: round(Math.sin(a) * orbit),
+          r,
+        })
+      }
+      // 点は主役に触れていないと浮いて見える。触れるまで内へ寄せる
+      const detailPart = {
+        id: 'detail',
+        steps: studs.map((d) => ({ op: 'add' as const, ref: d.id })),
+        fill: 'primary' as const,
+        mirror: 'none' as const,
+      }
+      let placed = studs
+      let touching = false
+      for (let k = 0; k < 16; k++) {
+        const probe = { shapes: [...shapes, ...placed], constraints, groups: [...parts.map((pt) => pt.steps), detailPart.steps] }
+        if (!isDisjoint(probe)) {
+          touching = true
+          break
+        }
+        placed = placed.map((d) =>
+          d.kind === 'circle' ? { ...d, cx: round(d.cx * 0.92), cy: round(d.cy * 0.92) } : d,
+        )
+      }
+      // 寄せた結果が塊になるなら添えない。添えは要素数を増やすためのもので、
+      // 塊を作るためのものではない
+      // 主役に届かない構成（弧だけの型など）では添えない。浮いた点は
+      // 要素数を増やすどころか、マークをばらばらに見せる
+      const withDetail = [...shapes, ...placed]
+      const ink = inkOf(withDetail, [...parts, detailPart])
+      if (touching && (ink === null || ink <= 0.62)) {
+        shapes = withDetail
+        parts.push(detailPart)
+      }
+    }
+  }
+
   // 囲い。家紋の基本構造は「丸に◯◯」で、モチーフ単体では紋にならない
   if (params.enclosure !== 'none') {
     const w = strokeOf(R, params.weight)
@@ -1116,12 +1186,23 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
           return { ...sh, w: round(Math.min(sh.w * 1.18, sh.r * 0.9)) }
         }
         if (sh.kind === 'bar') return { ...sh, w: round(sh.w * 1.18) }
+        // 添えの点も太らせる。囲いが付くと外接矩形が広がるので、点だけ
+        // 小さいままだと全体が薄く見える
+        if (sh.kind === 'circle' && sh.id.startsWith('stud')) {
+          return { ...sh, r: round(sh.r * 1.12) }
+        }
         if (sh === hole && sh.kind === 'poly') {
           return { ...sh, points: sh.points.map((q) => ({ x: round(q.x * 0.94), y: round(q.y * 0.94) })) }
         }
         return sh
       })
     }
+  }
+
+  // 抜きや、小さすぎる要素の除去で、先頭が add でなくなることがある。
+  // 最初のステップは必ず add（sub から始めると何も生まれない）
+  for (const pt of parts) {
+    if (pt.steps.length > 0 && pt.steps[0].op !== 'add') pt.steps[0] = { ...pt.steps[0], op: 'add' }
   }
 
   return {

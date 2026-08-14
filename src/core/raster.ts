@@ -39,18 +39,18 @@ function chunk(type: string, data: Buffer): Buffer {
 }
 
 /** グレースケール 8bit の PNG を組み立てる */
-function encodePng(gray: Uint8Array, size: number): Buffer {
+export function encodeGrayPng(gray: Uint8Array, width: number, height = width): Buffer {
   const ihdr = Buffer.alloc(13)
-  ihdr.writeUInt32BE(size, 0)
-  ihdr.writeUInt32BE(size, 4)
+  ihdr.writeUInt32BE(width, 0)
+  ihdr.writeUInt32BE(height, 4)
   ihdr[8] = 8 // bit depth
   ihdr[9] = 0 // color type: grayscale
 
   // 各行の先頭にフィルタ種別バイト（0 = None）が要る
-  const raw = Buffer.alloc(size * (size + 1))
-  for (let y = 0; y < size; y++) {
-    raw[y * (size + 1)] = 0
-    Buffer.from(gray.subarray(y * size, (y + 1) * size)).copy(raw, y * (size + 1) + 1)
+  const raw = Buffer.alloc(height * (width + 1))
+  for (let y = 0; y < height; y++) {
+    raw[y * (width + 1)] = 0
+    Buffer.from(gray.subarray(y * width, (y + 1) * width)).copy(raw, y * (width + 1) + 1)
   }
 
   return Buffer.concat([
@@ -69,16 +69,21 @@ export type RasterOptions = {
 }
 
 /**
- * ビルド結果を正方形の PNG にする。マークは中央へ、縦横比を保って収める。
+ * ビルド結果を正方形の画素にする。マークは中央へ、縦横比を保って収める。
+ *
+ * PNG に包む前で切ってあるのは、複数案を 1 枚のシートへ並べるため。
  */
-export function rasterize(built: BuildResult, options: RasterOptions = {}): Buffer {
+export function rasterizeGray(
+  built: BuildResult,
+  options: RasterOptions = {},
+): { gray: Uint8Array; size: number } {
   const size = Math.max(32, Math.min(options.size ?? 320, 1024))
   const margin = options.margin ?? 0.08
 
   const gray = new Uint8Array(size * size).fill(255)
   const art = built.artBounds
   if (art.width <= 0 || art.height <= 0 || built.parts.length === 0) {
-    return encodePng(gray, size)
+    return { gray, size }
   }
 
   const p = getPaper()
@@ -105,5 +110,13 @@ export function rasterize(built: BuildResult, options: RasterOptions = {}): Buff
     resetProject()
   }
 
-  return encodePng(gray, size)
+  return { gray, size }
+}
+
+/**
+ * ビルド結果を正方形の PNG にする。
+ */
+export function rasterize(built: BuildResult, options: RasterOptions = {}): Buffer {
+  const { gray, size } = rasterizeGray(built, options)
+  return encodeGrayPng(gray, size)
 }
