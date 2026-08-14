@@ -67,7 +67,7 @@ export async function designLogo(
     lastResult = result
 
     const found = diagnose(result)
-    attempts.push({ index: i, problems: found })
+    attempts.push({ index: i, problems: withReferenceHint(found, result.design) })
     if (found.length === 0) break
   }
 
@@ -128,6 +128,25 @@ export function describeValidationFailure(err: unknown): string {
   return message.slice(0, 500)
 }
 
+/**
+ * 参照切れが出たときは、使える id を具体的に並べて返す。
+ *
+ * 「参照 "mountain" が存在しない」だけだと、モデルは何に直せばよいか分からず
+ * 同じ間違いを繰り返す。実在する id を見せると 1 回で直せる。
+ */
+function withReferenceHint(problems: string[], design: LogoDesign): string[] {
+  if (problems.length === 0) return problems
+  if (!problems.some((p) => p.includes('参照'))) return problems
+
+  const shapeIds = design.shapes.map((s) => s.id)
+  const groupIds = design.groups.map((g) => g.id)
+  return [
+    ...problems,
+    `ref に使える id は次のものだけです — shapes: ${shapeIds.join(', ') || '(なし)'}` +
+      (groupIds.length > 0 ? ` / groups: ${groupIds.join(', ')}` : ''),
+  ]
+}
+
 /** ビルド結果が幾何として成立しているかの機械判定 */
 export function diagnose(result: CompileResult): string[] {
   const problems: string[] = [...result.warnings, ...result.constraintErrors]
@@ -137,6 +156,15 @@ export function diagnose(result: CompileResult): string[] {
   }
   for (const part of result.built.parts) {
     if (!part.pathData) problems.push(`part ${part.id} のパスが空`)
+  }
+
+  if (result.built.collapsedTo) {
+    problems.push(
+      `完成形がシェイプ "${result.built.collapsedTo}" そのものと同じ形になっている。` +
+        'add と intersect の順序を見直してください（外形でクリップするなら、内側の要素を' +
+        'すべて add した後に intersect を 1 回だけ置く。外形自体を add してしまうと' +
+        '全体が外形に戻ります）。',
+    )
   }
 
   const { artBounds } = result.built

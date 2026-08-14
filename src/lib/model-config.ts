@@ -37,6 +37,25 @@ export type ModelConfig = {
   apiBase: string | null
   /** トークン単価。未設定ならコスト計算をスキップする。 */
   rate?: TokenRate
+  /**
+   * OpenAI 互換エンドポイントで `response_format: json_schema` を使うか（既定 false）。
+   *
+   * 有効にするとスキーマがサーバー側で強制され、pattern まで効く。ただし
+   * **実測では品質が落ちた**。さくら AI Engine + gpt-oss-120b で同一プロンプト
+   * 各 5 回:
+   *
+   *   ON  : 警告なし 2/5・一発成功 2/5・総試行 11
+   *   OFF : 警告なし 5/5・一発成功 5/5・総試行 5
+   *
+   * 制約付きデコードは JSON の «形» は保証するが、この DSL のように
+   * 参照整合性（steps.ref が実在 id を指す）が要る構造では、形に合わせるために
+   * 意味の通らない値を埋めてしまう。形の担保はスキーマ検証＋修復リトライに任せ、
+   * 意味はプロンプトで作らせる方が結果が良い。
+   *
+   * モデルによっては逆転しうるので設定は残してある。
+   * anthropic / openai / google では無視される（各 SDK が自前で扱うため）。
+   */
+  structuredOutputs?: boolean
   createdAt: string
 }
 

@@ -144,6 +144,60 @@ describe('compile', () => {
     expect(artBounds.width).toBeGreaterThan(artBounds.height)
   })
 
+  it('外形を add してから intersect すると全体が外形に戻る（実測した失敗の再現）', () => {
+    // gpt-oss-120b が実際に出した構成: 基準円を add し、要素を足し、
+    // 最後に同じ基準円で intersect する。幾何としては正常（面積も縦横比も妥当）で
+    // 他の判定を素通りするが、出力はただの黒い円になる。
+    const design: LogoDesign = {
+      ...base,
+      shapes: [
+        { kind: 'circle', id: 'base', cx: 0, cy: 0, r: 3, pinned: true },
+        { kind: 'bar', id: 'peak', x1: -2, y1: 1, x2: 0, y2: -2, w: 0.5, cap: 'butt' },
+      ],
+      parts: [
+        {
+          id: 'logo',
+          fill: 'primary',
+          mirror: 'none',
+          steps: [
+            { op: 'add', ref: 'base' },
+            { op: 'add', ref: 'peak' },
+            { op: 'intersect', ref: 'base' },
+          ],
+        },
+      ],
+    }
+    const result = compile(design)
+    expect(result.warnings).toEqual([])
+    expect(result.built.collapsedTo).toBe('base')
+  })
+
+  it('正しく構成された設計は潰れ判定に引っかからない', () => {
+    for (const sample of samples) {
+      expect(compile(sample).built.collapsedTo).toBeNull()
+    }
+    // 外形クリップを正しく使った形（外形を add せず、要素だけ add してから intersect）
+    const clipped: LogoDesign = {
+      ...base,
+      shapes: [
+        { kind: 'circle', id: 'frame', cx: 0, cy: 0, r: 3, pinned: true },
+        { kind: 'bar', id: 'peak', x1: -3, y1: 2, x2: 0, y2: -3, w: 0.8, cap: 'butt' },
+      ],
+      parts: [
+        {
+          id: 'logo',
+          fill: 'primary',
+          mirror: 'vertical',
+          steps: [
+            { op: 'add', ref: 'peak' },
+            { op: 'intersect', ref: 'frame' },
+          ],
+        },
+      ],
+    }
+    expect(compile(clipped).built.collapsedTo).toBeNull()
+  })
+
   it('mirror:vertical は左右対称な形を作る', () => {
     const design: LogoDesign = {
       ...base,

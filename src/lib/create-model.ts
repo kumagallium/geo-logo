@@ -16,6 +16,9 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { LanguageModel } from 'ai'
 import type { ModelConfig } from './model-config'
 
+const truthy = (v: string | undefined): boolean | undefined =>
+  v === undefined || v === '' ? undefined : v !== '0' && v.toLowerCase() !== 'false'
+
 const isBrowser = (): boolean => typeof window !== 'undefined'
 
 /**
@@ -50,12 +53,7 @@ export function createModel(config: ModelConfig): LanguageModel {
       // apiBase が設定されている場合は openai-compatible を使う
       // （@ai-sdk/openai は baseURL でカスタムエンドポイントを正しく扱えない場合がある）
       if (config.apiBase) {
-        const provider = createOpenAICompatible({
-          name: config.name,
-          baseURL: config.apiBase,
-          apiKey: config.apiKey,
-        })
-        return provider(config.modelId)
+        return compatibleModel(config)
       }
       const provider = createOpenAI({ apiKey: config.apiKey })
       return provider(config.modelId)
@@ -68,14 +66,38 @@ export function createModel(config: ModelConfig): LanguageModel {
       if (!config.apiBase) {
         throw new Error('The openai-compatible provider requires apiBase')
       }
-      const provider = createOpenAICompatible({
-        name: config.name,
-        baseURL: config.apiBase,
-        apiKey: config.apiKey,
-      })
-      return provider(config.modelId)
+      return compatibleModel(config)
     }
     default:
       throw new Error(`Unknown provider: ${config.provider}`)
   }
+}
+
+/**
+ * OpenAI 互換エンドポイント用のモデルを作る。
+ *
+ * `supportsStructuredOutputs` を立てないと AI SDK は response_format を送らず、
+ * 「JSON で返して」とプロンプトで頼むだけになる。geo-logo の DSL は
+ * groups / parts / steps と入れ子が深く、その状態では構造が崩れて検証に落ちる。
+ * 対応エンドポイントでは有効化するのが正しい既定。
+ */
+function compatibleModel(config: ModelConfig): LanguageModel {
+  // 既定 false。有効化すると JSON の形は保証されるが、実測では設計の質が落ちた
+  //（理由と数値は model-config.ts の structuredOutputs のコメント）。
+  // 優先順: モデル設定 → 環境変数 → 既定
+  const envOverride =
+    typeof process !== 'undefined' ? truthy(process.env?.GEOLOGO_STRUCTURED_OUTPUTS) : undefined
+  const supportsStructuredOutputs = config.structuredOutputs ?? envOverride ?? false
+
+  // ⚠️ 指定先は provider 生成時のオプション。`provider.languageModel(id, config)` は
+  //    型定義上は第 2 引数を受け取るが、実装（v2.0.67）は
+  //    `createLanguageModel = (modelId) => createChatModel(modelId)` で捨てている。
+  //    そちらに渡すと黙って既定 false のままになる。
+  const provider = createOpenAICompatible({
+    name: config.name,
+    baseURL: config.apiBase!,
+    apiKey: config.apiKey,
+    supportsStructuredOutputs,
+  })
+  return provider(config.modelId)
 }

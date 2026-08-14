@@ -25,10 +25,26 @@ export type BuildResult = {
   bounds: Bounds
   /** 塗り形状だけの枠（完成ロゴ用） */
   artBounds: Bounds
+  /**
+   * 結果が単一のプリミティブと区別できない形に潰れた場合、その id。
+   *
+   * 複数のシェイプを宣言したのに intersect / add の順序を誤ると、全体が
+   * 基準円そのものに戻ることがある。幾何としては正常（面積も縦横比も妥当）
+   * なので他の判定を素通りするが、ロゴとしては完全な失敗。
+   */
+  collapsedTo: string | null
   warnings: string[]
 }
 
 const EMPTY_BOUNDS: Bounds = { x: -1, y: -1, width: 2, height: 2 }
+
+/**
+ * 面積を取る。paper の型は `area` を Path / CompoundPath 側にしか宣言しておらず、
+ * ブーリアン演算の戻り値である PathItem からは見えない（実行時には両方に在る）。
+ */
+function areaOf(item: paper.PathItem): number {
+  return Math.abs((item as unknown as { area?: number }).area ?? 0)
+}
 
 export function build(design: LogoDesign): BuildResult {
   const p = getPaper()
@@ -61,6 +77,10 @@ export function build(design: LogoDesign): BuildResult {
 
   // --- part を組み立て ---
   const parts: BuiltPart[] = []
+  // 潰れ検出のため、px 換算前（モジュール単位）の形をそのまま控えておく。
+  // 面積や外形寸法だけでは足りず（切り欠きと追加が相殺して一致しうる）、
+  // 対称差で形そのものを比べる必要がある。
+  const partShapes: paper.PathItem[] = []
   for (const part of design.parts) {
     let item = foldSteps(part.steps, resolve, warnings, `part ${part.id}`)
     if (!item) {
@@ -78,6 +98,8 @@ export function build(design: LogoDesign): BuildResult {
       item = united
     }
 
+    partShapes.push(item.clone())
+
     // ここで初めて px へ。以降のストローク幅は px 絶対値で扱える。
     item.scale(M, origin)
 
@@ -94,9 +116,50 @@ export function build(design: LogoDesign): BuildResult {
   const construction = buildConstruction(design, M)
   const artBounds = computeBounds(p, parts, [])
   const bounds = computeBounds(p, parts, construction)
+  const collapsedTo = findCollapse(p, design, partShapes)
+  for (const shape of partShapes) shape.remove()
 
   resetProject()
-  return { parts, construction, bounds, artBounds, warnings }
+  return { parts, construction, bounds, artBounds, collapsedTo, warnings }
+}
+
+/**
+ * 完成形が単一のプリミティブと同じ形になっていないか調べる。
+ *
+ * 面積と外形寸法の比較では足りない。例えばリングから扇形を切り欠いて横棒を足すと、
+ * 面積も外形もほぼ元のリングと一致してしまう（Monogram G のサンプルが実際にそうなる）。
+ * そこで対称差 (A-B) ∪ (B-A) の面積を測り、元の面積に対して無視できるときだけ
+ * 「同じ形」と判定する。
+ */
+function findCollapse(
+  p: PaperCore,
+  design: LogoDesign,
+  partShapes: paper.PathItem[],
+): string | null {
+  if (partShapes.length !== 1 || design.shapes.length < 2) return null
+  const result = partShapes[0]
+  const resultArea = areaOf(result)
+  if (resultArea < 1e-9) return null
+
+  for (const shape of design.shapes) {
+    const primitive = makePrimitive(p, shape)
+    if (!primitive) continue
+    const primitiveArea = areaOf(primitive)
+    if (primitiveArea < 1e-9) {
+      primitive.remove()
+      continue
+    }
+
+    const onlyResult = result.subtract(primitive)
+    const onlyPrimitive = primitive.subtract(result)
+    const difference = areaOf(onlyResult) + areaOf(onlyPrimitive)
+    onlyResult.remove()
+    onlyPrimitive.remove()
+    primitive.remove()
+
+    if (difference / Math.max(resultArea, primitiveArea) < 0.01) return shape.id
+  }
+  return null
 }
 
 function foldSteps(
