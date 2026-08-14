@@ -23,8 +23,8 @@ type Sample = {
   distinct: number
   contours: number
   ink: number
-  fold: number
-  mirrored: boolean
+  foldErr: (n: number) => number
+  mirrorErr: number | null
 }
 
 /** n 回対称の次数。輪郭を重心まわりに回して、自分に重なる最小の n を探す。 */
@@ -47,7 +47,12 @@ function foldOrder(points: Vec[], cx: number, cy: number, R: number): number {
     for (let i = 0; i < B; i++) sum += Math.abs(prof[i] - prof[(i + shift) % B])
     return sum / B
   }
-  for (const n of [6, 5, 4, 3, 2]) if (err(n) < 0.045) return n
+  return err
+}
+
+/** 閾値を決め打たず、誤差そのものを返す。安定性は呼び出し側で見る。 */
+function classifyFold(err: (n: number) => number, tol: number): number {
+  for (const n of [6, 5, 4, 3, 2]) if (err(n) < tol) return n
   return 1
 }
 
@@ -86,15 +91,16 @@ for (const file of files) {
     }
   }
 
-  // 面積はシューレース。塗りと抜きの区別はここでは付けず、外接円との比を見る
-  const area = contours.reduce((sum, c) => {
+  // 面積はシューレース。抜きは負で足す。絶対値で足すと穴が塗りとして
+  // 数えられ、インク率が 0.9 まで跳ね上がる（実際に跳ね上がった）
+  const area = traced.reduce((sum, t) => {
     let a = 0
-    for (let i = 0; i < c.length; i++) {
-      const p = c[i]
-      const q = c[(i + 1) % c.length]
+    for (let i = 0; i < t.points.length; i++) {
+      const p = t.points[i]
+      const q = t.points[(i + 1) % t.points.length]
       a += p.x * q.y - q.x * p.y
     }
-    return sum + Math.abs(a) / 2
+    return sum + (t.solid ? 1 : -1) * (Math.abs(a) / 2)
   }, 0)
 
   const sorted = [...radii].sort((a, b) => a - b)
@@ -111,8 +117,15 @@ for (const file of files) {
     distinct,
     contours: contours.length,
     ink: area / (Math.PI * R * R),
-    fold: foldOrder(pts, cx, cy, R),
-    mirrored: mirrorAxis(pts) !== null,
+    foldErr: foldOrder(pts, cx, cy, R),
+    // 判定の緩さを変えて、対称と見なされる割合がどう動くかを見る
+    mirrorErr: mirrorAxis(pts, undefined, 0.02) !== null
+      ? 0.02
+      : mirrorAxis(pts, undefined, 0.05) !== null
+        ? 0.05
+        : mirrorAxis(pts, undefined, 0.1) !== null
+          ? 0.1
+          : null,
   })
 }
 
@@ -121,6 +134,12 @@ const median = (xs: number[]) => {
   return s.length ? s[Math.floor(s.length / 2)] : 0
 }
 const count = <T,>(xs: T[], f: (x: T) => boolean) => xs.filter(f).length
+/** 四分位。中央値だけでは散らばりが見えない */
+const quart = (xs: number[], digits = 0) => {
+  const s = [...xs].sort((a, b) => a - b)
+  const at = (q: number) => s[Math.floor(s.length * q)] ?? 0
+  return `${at(0.25).toFixed(digits)}〜${at(0.75).toFixed(digits)}`
+}
 
 console.log(`家紋 ${samples.length} 点\n`)
 
@@ -184,19 +203,44 @@ if (steps.length) {
 
 console.log('\n■ 要素の中心はどこにあるか（外接半径 = 1）')
 const cs = samples.flatMap((s) => s.centers)
-console.log(`  中心に置く（0.1 未満）: ${((count(cs, (c) => c < 0.1) / cs.length) * 100).toFixed(0)}%`)
-console.log(`  中央値 ${median(cs).toFixed(3)}`)
+console.log(`  中央値 ${median(cs).toFixed(3)}  （四分位 ${quart(cs, 2)}）`)
+// 分布の形を見る。中央値だけだと「環に並ぶ」のか「散らばる」のか分からない
+const hist = new Array(10).fill(0)
+for (const c of cs) hist[Math.min(9, Math.floor(c * 10))]++
+for (let i = 0; i < 10; i++) {
+  const pct = (hist[i] / cs.length) * 100
+  console.log(
+    `  ${(i / 10).toFixed(1)}〜${((i + 1) / 10).toFixed(1)}  ${'█'.repeat(Math.round(pct / 2)).padEnd(26)} ${pct.toFixed(1)}%`,
+  )
+}
 
 console.log('\n■ 構成')
-console.log(`  半径の種類  中央値 ${median(samples.map((s) => s.distinct))} 種`)
-console.log(`  輪郭の数    中央値 ${median(samples.map((s) => s.contours))} 本`)
-console.log(`  インク率    中央値 ${median(samples.map((s) => s.ink)).toFixed(2)}（外接円に対する塗り）`)
+console.log(`  輪郭の数    中央値 ${median(samples.map((s) => s.contours))} 本  （四分位 ${quart(samples.map((s) => s.contours))}）`)
+console.log(`  インク率    中央値 ${median(samples.map((s) => s.ink)).toFixed(2)}  （四分位 ${quart(samples.map((s) => s.ink), 2)}）`)
+console.log('  ※ 半径の種類は畳み込み依存なので載せない')
 
-console.log('\n■ 対称')
-console.log(`  左右対称    ${((count(samples, (s) => s.mirrored) / samples.length) * 100).toFixed(0)}%`)
-for (const n of [2, 3, 4, 5, 6]) {
-  const c = count(samples, (s) => s.fold === n)
-  if (c > 0) console.log(`  ${n} 回対称    ${((c / samples.length) * 100).toFixed(0)}%（${c} 点）`)
+console.log('\n■ 左右対称（判定の緩さ別）')
+for (const tol of [0.02, 0.05, 0.1]) {
+  const c = count(samples, (s) => s.mirrorErr !== null && s.mirrorErr <= tol)
+  console.log(`  許容 ${(tol * 100).toFixed(0)}%: ${((c / samples.length) * 100).toFixed(0)}%（${c} 点）`)
 }
-const none = count(samples, (s) => s.fold === 1)
-console.log(`  回転対称なし ${((none / samples.length) * 100).toFixed(0)}%（${none} 点）`)
+
+console.log('\n■ 回転対称（判定の緩さ別）')
+for (const tol of [0.02, 0.045, 0.08]) {
+  const dist = new Map<number, number>()
+  for (const s of samples) {
+    const n = classifyFold(s.foldErr, tol)
+    dist.set(n, (dist.get(n) ?? 0) + 1)
+  }
+  const parts = [...dist]
+    .sort((a, b) => b[1] - a[1])
+    .map(([n, c]) => `${n === 1 ? 'なし' : `${n}回`} ${((c / samples.length) * 100).toFixed(0)}%`)
+  console.log(`  許容 ${(tol * 100).toFixed(1)}%: ${parts.join(' / ')}`)
+}
+console.log('  → 割合が閾値で大きく動くなら、その数字は信用しない')
+console.log(
+  '  ただし閾値に強くても正しいとは限らない。この判定は 3 回対称を 0% と出すが、\n' +
+    '  三つ巴・三つ葉葵のような 3 回対称の紋は実在する。外周の丸を持つ紋（丸に◯◯）で\n' +
+    '  半径の輪郭がほぼ一定になり、どの n でも重なってしまうのが原因と見ている。\n' +
+    '  外周を除いてから測り直すまで、この数字は使わないこと。',
+)
