@@ -5,9 +5,18 @@ import {
   archetypeParamsSchema,
   buildFromArchetype,
 } from '../core/archetypes'
-import { compile, type CompileResult } from '../core/index'
+import { buildFromComposition, compositionSchema } from '../core/composition'
+import { compile, type CompileResult, type LogoDesign } from '../core/index'
 import { CodedError } from './ai-error-codes'
+import {
+  COMPOSITION_SYSTEM_PROMPT,
+  compositionRepairPrompt,
+  compositionUserPrompt,
+} from './composition-prompt'
 import { repairPrompt, systemPrompt, userPrompt } from './design-prompt'
+
+/** 部品方式の計画。幾何は core/composition.ts が組み立てる。 */
+export const compositionPlanSchema = compositionSchema
 
 export type DesignAttempt = {
   index: number
@@ -33,6 +42,87 @@ export const designPlanSchema = archetypeParamsSchema.extend({
 
 export type DesignPlan = z.infer<typeof designPlanSchema>
 
+/**
+ * 構成モード。
+ *
+ * archetype: 9 種の型から選ばせる。抽象的な主題（循環・成長・波紋）に強く、
+ *            幾何の破綻がまず起きない。ただし出せるマークは 9 種類しかない。
+ * composition: 部品を自由に配置させる。具体的な題材（動物・道具・建物）を
+ *            扱えるが、配置はモデル任せになるぶん当たり外れがある。
+ *
+ * どちらが合うかは題材次第で、事前に判定するには 1 回余分に推論が要る。
+ * 候補を並行生成しているので、両方を混ぜて人に選ばせるほうが安く確実。
+ */
+export type DesignMode =
+  | { kind: 'archetype'; family?: (typeof ARCHETYPE_FAMILIES)[number] }
+  | { kind: 'composition'; angle?: string }
+
+/**
+ * 部品方式で候補を分けるための視点。デザイナーが案を出すときの切り口。
+ *
+ * 「顔や頭部」のように題材を限定する語を入れると、顔を持たない主題
+ *（循環型経済など）にまで顔を作らせてしまう（実測）。どんな題材にも
+ * 当てはまる引き方にする。
+ */
+const COMPOSITION_ANGLES = [
+  '全体のかたちを捉えたシルエット',
+  '最も象徴的な一部分だけを大きく切り取った形',
+]
+
+/**
+ * 候補 i 番に割り当てる構成モード。
+ *
+ * 偶数番をアーキタイプ、奇数番を部品方式にして交互に並べる。題材が抽象か
+ * 具体かを事前に判定するには 1 回余分に推論が要るので、判定せずに両方出して
+ * 人に選ばせる。候補が 2 件でも両方式が 1 件ずつ並ぶ。
+ *
+ * サーバーモードとブラウザ直叩きの両方から呼ぶ。番号だけを API で受け渡し、
+ * 割り当ての規則はここに一元化する。
+ */
+export function modeForVariant(index: number): DesignMode {
+  const i = Math.max(0, Math.trunc(index))
+  if (i % 2 === 0) {
+    return {
+      kind: 'archetype',
+      family: ARCHETYPE_FAMILIES[(i / 2) % ARCHETYPE_FAMILIES.length],
+    }
+  }
+  return {
+    kind: 'composition',
+    angle: COMPOSITION_ANGLES[((i - 1) / 2) % COMPOSITION_ANGLES.length],
+  }
+}
+
+type ModeSpec = {
+  schema: z.ZodType
+  system: string
+  user: string
+  repair: (problems: string[]) => string
+  build: (object: unknown) => LogoDesign
+}
+
+function specFor(brief: string, mode: DesignMode): ModeSpec {
+  if (mode.kind === 'composition') {
+    return {
+      schema: compositionPlanSchema,
+      system: COMPOSITION_SYSTEM_PROMPT,
+      user: compositionUserPrompt(brief, mode.angle),
+      repair: (problems) => compositionRepairPrompt(brief, problems),
+      build: (object) => buildFromComposition(compositionPlanSchema.parse(object)),
+    }
+  }
+  return {
+    schema: designPlanSchema,
+    system: systemPrompt(mode.family?.members),
+    user: userPrompt(brief, mode.family?.name),
+    repair: (problems) => repairPrompt(brief, problems),
+    build: (object) => {
+      const plan = designPlanSchema.parse(object)
+      return buildFromArchetype({ name: plan.name, concept: plan.concept, params: plan })
+    },
+  }
+}
+
 const MAX_ATTEMPTS = 3
 
 /**
@@ -51,25 +141,23 @@ const MAX_ATTEMPTS = 3
 export async function designLogo(
   brief: string,
   model: LanguageModel,
-  family?: (typeof ARCHETYPE_FAMILIES)[number],
+  mode: DesignMode = { kind: 'archetype' },
 ): Promise<DesignOutcome> {
   const attempts: DesignAttempt[] = []
   let lastResult: CompileResult | null = null
   let lastError: unknown = null
-  const system = systemPrompt(family?.members)
+  const spec = specFor(brief, mode)
 
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const problems = attempts.at(-1)?.problems
-    const prompt = problems?.length
-      ? repairPrompt(brief, problems)
-      : userPrompt(brief, family?.name)
+    const prompt = problems?.length ? spec.repair(problems) : spec.user
 
     let object: unknown
     try {
       const generated = await generateObject({
         model,
-        schema: designPlanSchema,
-        system,
+        schema: spec.schema,
+        system: spec.system,
         prompt,
         maxOutputTokens: 4000,
       })
@@ -86,10 +174,7 @@ export async function designLogo(
       continue
     }
 
-    const plan = object as DesignPlan
-    const result = compile(
-      buildFromArchetype({ name: plan.name, concept: plan.concept, params: plan }),
-    )
+    const result = compile(spec.build(object))
     lastResult = result
 
     const found = diagnose(result)

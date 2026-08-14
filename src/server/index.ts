@@ -3,8 +3,7 @@ import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { compile, designSchema } from '../core/index.js'
-import { ARCHETYPE_FAMILIES } from '../core/archetypes.js'
-import { designLogo } from '../lib/design-agent.js'
+import { designLogo, modeForVariant } from '../lib/design-agent.js'
 import { createModel } from '../lib/create-model.js'
 import { errorBody, noModelRegisteredBody } from '../lib/ai-error-codes.js'
 import { resolveModelConfig } from './config/resolve-model.js'
@@ -37,10 +36,10 @@ const designRequest = z.object({
   /** 設定画面で選んだモデル名。未指定なら既定モデル */
   model: z.string().optional(),
   /**
-   * 候補ごとに割り当てる型の系統（ARCHETYPE_FAMILIES の添字）。
-   * 添字で受けるので、範囲外の値は下の剰余で必ず既存の系統に落ちる。
+   * 候補の番号。どの構成モードを使うかはこの番号から決まる（modeForVariant）。
+   * 添字で受けるので、範囲外の値も剰余で必ず既存のモードに落ちる。
    */
-  familyIndex: z.number().int().min(0).max(999).optional(),
+  variantIndex: z.number().int().min(0).max(999).optional(),
 })
 
 app.post('/api/design', async (c) => {
@@ -56,12 +55,12 @@ app.post('/api/design', async (c) => {
   }
 
   try {
-    const { familyIndex } = parsed.data
-    const family =
-      familyIndex === undefined
-        ? undefined
-        : ARCHETYPE_FAMILIES[familyIndex % ARCHETYPE_FAMILIES.length]
-    const outcome = await designLogo(parsed.data.brief, createModel(modelConfig), family)
+    const { variantIndex } = parsed.data
+    const outcome = await designLogo(
+      parsed.data.brief,
+      createModel(modelConfig),
+      variantIndex === undefined ? undefined : modeForVariant(variantIndex),
+    )
     return c.json({
       design: outcome.result.design,
       attempts: outcome.attempts,

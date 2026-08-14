@@ -5,9 +5,8 @@
  */
 import 'dotenv/config'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { ARCHETYPE_FAMILIES } from '../src/core/archetypes.js'
 import { createModel } from '../src/lib/create-model.js'
-import { designLogo } from '../src/lib/design-agent.js'
+import { designLogo, modeForVariant } from '../src/lib/design-agent.js'
 import { fromEnv } from '../src/server/config/resolve-model.js'
 
 const brief = process.argv.slice(2).join(' ') || '海洋データを扱うスタートアップのマーク'
@@ -19,16 +18,19 @@ if (!config?.apiKey) {
 const model = createModel(config)
 
 mkdirSync('tmp', { recursive: true })
+const COUNT = Number(process.env.GEOLOGO_CANDIDATES ?? 4)
 const results = await Promise.all(
-  ARCHETYPE_FAMILIES.map(async (family, i) => {
+  Array.from({ length: COUNT }, async (_, i) => {
+    const mode = modeForVariant(i)
+    const label = mode.kind === 'archetype' ? `型:${mode.family?.name ?? '自由'}` : `部品:${mode.angle}`
     try {
-      const o = await designLogo(brief, model, family)
+      const o = await designLogo(brief, model, mode)
       writeFileSync(`tmp/run${i + 1}-logo.svg`, o.result.logoSvg)
       writeFileSync(`tmp/run${i + 1}-blueprint.svg`, o.result.blueprintSvg)
-      return `#${i + 1} ${family.name}
+      return `#${i + 1} ${label}
      試行${o.attempts.length} / ${o.result.design.name} / shapes ${o.result.design.shapes.length} / 問題 ${o.attempts.at(-1)?.problems.length}`
     } catch (err) {
-      return `#${i + 1} ${family.name} … 失敗: ${err instanceof Error ? err.message.slice(0, 80) : err}`
+      return `#${i + 1} ${label} … 失敗: ${err instanceof Error ? err.message.slice(0, 80) : err}`
     }
   }),
 )

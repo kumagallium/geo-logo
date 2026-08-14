@@ -1,9 +1,8 @@
-import { ARCHETYPE_FAMILIES } from '../../core/archetypes'
 import type { LogoDesign } from '../../core/index'
 import { aiErrorFromResponse } from '../../lib/ai-error'
 import { CodedError } from '../../lib/ai-error-codes'
 import { createModel } from '../../lib/create-model'
-import { designLogo } from '../../lib/design-agent'
+import { designLogo, modeForVariant } from '../../lib/design-agent'
 import { detectRuntimeMode } from '../../lib/runtime-mode'
 import { getDefaultLLMModel } from '../settings/store'
 
@@ -47,7 +46,7 @@ export async function requestDesigns(brief: string, count: number): Promise<Cand
 
 export async function requestDesign(
   brief: string,
-  familyIndex?: number,
+  variantIndex?: number,
 ): Promise<DesignResponse> {
   const mode = await detectRuntimeMode()
 
@@ -57,11 +56,11 @@ export async function requestDesign(
       throw new CodedError('No model registered', 'NO_MODEL_REGISTERED')
     }
     try {
-      const family =
-        familyIndex === undefined
-          ? undefined
-          : ARCHETYPE_FAMILIES[familyIndex % ARCHETYPE_FAMILIES.length]
-      const outcome = await designLogo(brief, createModel(config), family)
+      const outcome = await designLogo(
+        brief,
+        createModel(config),
+        variantIndex === undefined ? undefined : modeForVariant(variantIndex),
+      )
       return {
         design: outcome.result.design,
         attempts: outcome.attempts,
@@ -75,7 +74,7 @@ export async function requestDesign(
   const res = await fetch(`${import.meta.env.BASE_URL}api/design`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ brief, model: undefined, familyIndex }),
+    body: JSON.stringify({ brief, model: undefined, variantIndex }),
   })
   if (!res.ok) throw await aiErrorFromResponse(res, '設計の生成に失敗しました')
   return (await res.json()) as DesignResponse
