@@ -138,9 +138,9 @@ export const compositionSchema = z.object({
       const k = typeof v === 'string' ? v.trim().toLowerCase() : ''
       return k === 'silver' || k === 'integer' ? (k as 'silver' | 'integer') : ('golden' as const)
     }),
-  // 12 部品 ×（左右対称で 2 倍）×（vesica は 2 円）= 最大 48 シェイプ。
-  // DSL の上限 64 に収まる。
-  pieces: z.array(pieceSchema).min(1).max(12),
+  // 16 部品 ×（左右対称で 2 倍）×（vesica は 2 円）= 最大 64 シェイプで、
+  // DSL の上限ちょうど。これ以上はブーリアン演算の重さも効いてくる。
+  pieces: z.array(pieceSchema).min(1).max(16),
 })
 
 export type Composition = z.infer<typeof compositionSchema>

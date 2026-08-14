@@ -10,7 +10,17 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { buildFromComposition } from '../src/core/composition.js'
 import { compile } from '../src/core/index.js'
 import { packCircles } from '../src/core/pack.js'
-import { fitToModule, mirrorAxis, sampleContoursFromSvg } from '../src/core/trace.js'
+import {
+  allocateArcs,
+  fitToModule,
+  harmonizeRadii,
+  mirrorAxis,
+  nestingDepth,
+  sampleContoursFromSvg,
+  traceArcs,
+} from '../src/core/trace.js'
+import { getPaper, resetProject } from '../src/core/paper-setup.js'
+import type { Shape, Step } from '../src/core/index.js'
 import { ladder } from '../src/core/emblem.js'
 
 const [file, out = 'hint', n = '7'] = process.argv.slice(2)
@@ -60,14 +70,66 @@ const design = buildFromComposition({
   pieces,
 } as never)
 
-const result = compile(design)
+// 円板を合体させただけの輪郭は、丸い凹凸の連なりになる。円は構造を決める
+// ためのもので、輪郭はそこから改めて円弧で描く。家紋の逆算で分かったこと。
+const rough = compile(design)
+const p = getPaper()
+resetProject()
+const outline = new p.CompoundPath(rough.built.parts.map((x) => x.pathData).join(' '))
+const kids = (outline.children?.length ? outline.children : [outline]) as paper.Path[]
+const M = rough.design.module
+
+const smoothed: Array<{ points: { x: number; y: number }[]; solid: boolean }> = []
+const biggest = kids.reduce((a, b) =>
+  Math.abs((b as unknown as { area: number }).area) > Math.abs((a as unknown as { area: number }).area) ? b : a,
+)
+const solidSign = Math.sign((biggest as unknown as { area: number }).area)
+for (const path of kids) {
+  const area = (path as unknown as { area: number }).area
+  if (path.length <= 0 || area === 0) continue
+  const count = Math.max(64, Math.round(480 * (path.length / biggest.length)))
+  const pts: { x: number; y: number }[] = []
+  for (let i = 0; i < count; i++) {
+    const pt = path.getPointAt((path.length * i) / count)
+    if (pt) pts.push({ x: pt.x / M, y: pt.y / M })
+  }
+  if (pts.length >= 8) smoothed.push({ points: pts, solid: Math.sign(area) === solidSign })
+}
+outline.remove()
+resetProject()
+
+const smoothContours = smoothed.map((c) => c.points)
+const quota = allocateArcs(smoothContours, Math.max(12, circles.length * 2))
+const depth = nestingDepth(smoothContours)
+const shapes: Shape[] = []
+const steps: Step[] = []
+smoothContours.forEach((points, i) => {
+  const { segments } = traceArcs(points, { maxArcs: quota[i], mirrorX: symmetric ? 0 : undefined })
+  if (segments.length < 3) return
+  shapes.push({ kind: 'contour', id: `s${i}`, segments })
+  steps.push({ op: smoothed[i].solid ? 'add' : 'sub', ref: `s${i}` })
+})
+const contourShapes = shapes.filter((x) => x.kind === 'contour')
+const tuned = harmonizeRadii(contourShapes.map((x) => (x.kind === 'contour' ? x.segments : [])))
+contourShapes.forEach((x, i) => {
+  if (x.kind === 'contour') x.segments = tuned.groups[i]
+})
+const order = shapes.map((_, i) => i).sort((a, b) => depth[a] - depth[b])
+
+const result = compile({
+  ...design,
+  concept: `${design.concept}。輪郭は円弧 ${shapes.reduce((n, x) => n + (x.kind === 'contour' ? x.segments.length : 0), 0)} 本で描き直した`,
+  shapes: [...design.shapes, ...shapes],
+  parts: [{ id: 'mark', steps: order.map((i) => steps[i]), fill: 'primary', mirror: 'none' }],
+})
 mkdirSync('tmp', { recursive: true })
 writeFileSync(`tmp/${out}-logo.svg`, result.logoSvg)
 writeFileSync(`tmp/${out}-blueprint.svg`, result.blueprintSvg)
 writeFileSync(`tmp/${out}-poster.svg`, result.posterSvg)
 
-const radii = [...new Set(design.shapes.map((s) => ('r' in s ? Math.round(s.r * 1000) : 0)))]
+const arcs = shapes.reduce((n, x) => n + (x.kind === 'contour' ? x.segments.length : 0), 0)
 console.log(
-  `${out}: 取り出した円 ${circles.length} → 部品 ${pieces.length}（反転後 ${design.shapes.length}）/ ` +
-    `異なる半径 ${radii.length} 種 / 対称 ${symmetric ? 'あり' : 'なし'} / インク ${(result.built.inkRatio * 100).toFixed(0)}%`,
+  `${out}: 円 ${circles.length} → 輪郭 ${shapes.length} / 円弧 ${arcs} 本 / ` +
+    `異なる半径 ${tuned.radii.length} 種 / 対称 ${symmetric ? 'あり' : 'なし'} / ` +
+    `インク ${(result.built.inkRatio * 100).toFixed(0)}%`,
 )

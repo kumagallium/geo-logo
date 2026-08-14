@@ -125,7 +125,7 @@ export function applyPatch(plan: Composition, patch: Patch): Composition {
   const kept = pieces.filter((_, i) => !removed.has(i))
   // すべて消してしまう指示は受け付けない
   const next = kept.length > 0 ? [...kept, ...patch.add] : [...pieces, ...patch.add]
-  return { ...plan, pieces: next.slice(0, 12) }
+  return { ...plan, pieces: next.slice(0, 16) }
 }
 
 export function revisePrompt(brief: string, plan: Composition, c: Critique): string {

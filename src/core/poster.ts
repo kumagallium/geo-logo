@@ -18,6 +18,9 @@ const FRAME_INSET = 38
 
 /** 紙・墨・罫。ロゴ自体の palette とは別に、紙面の色として持つ。 */
 const PAPER = '#F4F1E8'
+/** 方眼。作図面の地として敷く */
+const GRAPH = '#DED8C6'
+const GRAPH_BOLD = '#D2CAB2'
 const INK = '#1B1B1A'
 const RULE = '#B9B2A0'
 const SUBTLE = '#6F6A5E'
@@ -113,6 +116,30 @@ function place(svg: string, x: number, y: number, w: number, h: number): string 
     )
 }
 
+/**
+ * 方眼紙。
+ *
+ * 設計図側の方眼は外してある（画面用の青い方眼はクリーム色の紙から浮く）。
+ * 紙の地としての方眼はまた別で、作図の背後にあると図面らしさが出る。
+ * 5 目盛ごとに濃くするのは方眼紙の慣習。
+ */
+function graphPaper(x: number, y: number, w: number, h: number, step: number): string {
+  const lines: string[] = []
+  for (let i = 0, gx = x; gx <= x + w + 0.01; i++, gx = x + i * step) {
+    const bold = i % 5 === 0
+    lines.push(
+      `<line x1="${gx.toFixed(1)}" y1="${y}" x2="${gx.toFixed(1)}" y2="${y + h}" stroke="${bold ? GRAPH_BOLD : GRAPH}" stroke-width="${bold ? 0.6 : 0.35}"/>`,
+    )
+  }
+  for (let i = 0, gy = y; gy <= y + h + 0.01; i++, gy = y + i * step) {
+    const bold = i % 5 === 0
+    lines.push(
+      `<line x1="${x}" y1="${gy.toFixed(1)}" x2="${x + w}" y2="${gy.toFixed(1)}" stroke="${bold ? GRAPH_BOLD : GRAPH}" stroke-width="${bold ? 0.6 : 0.35}"/>`,
+    )
+  }
+  return lines.join('\n    ')
+}
+
 function escapeText(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
@@ -169,6 +196,10 @@ export function renderPoster(
     <text x="${MARGIN + 42}" y="${headY}" font-family="${SANS}" font-size="20" font-weight="600" fill="${INK}">${escapeText(wordmark)}</text>
     <text x="${W - MARGIN}" y="${headY}" text-anchor="end" font-family="${MONO}" font-size="12" fill="${SUBTLE}" letter-spacing="1.5">CONSTRUCTION</text>
     <line x1="${MARGIN}" y1="${headY + 22}" x2="${W - MARGIN}" y2="${headY + 22}" stroke="${RULE}" stroke-width="1"/>
+  </g>
+
+  <g data-layer="graph">
+    ${graphPaper(MARGIN, drawY, drawW, drawH, 8)}
   </g>
 
   <g data-layer="drawing">
