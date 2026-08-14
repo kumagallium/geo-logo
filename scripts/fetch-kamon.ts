@@ -6,9 +6,15 @@
  * 集めた家紋はトレースして「定石」を測るためだけに使う（scripts/kamon-ratios.ts）。
  * 成果は係数の表として順方向の作図へ戻すので、成果物に他人の図形は入らない。
  *
- * ライセンスはパブリックドメインと CC0 だけを受け入れる。判定は Commons が
- * 返すメタデータで行い、判定できないものは落とす。曖昧なものを取り込むと、
- * 後から出どころを追えなくなる。
+ * 既定はパブリックドメインと CC0 だけ。判定は Commons が返すメタデータで
+ * 行い、判定できないものは落とす。
+ *
+ * KAMON_MEASURE_ONLY=1 を付けると CC BY-SA も対象にする。紋の意匠自体は
+ * 数百年前のもので自由だが、SVG に起こした人の権利が乗っているため、
+ * 自由なファイルは全体の 8% しかない。母数が足りないと係数が定まらない。
+ *
+ * 測定専用の取得なので、集めた図形は data/（gitignore 済み）から出ない。
+ * 再配布せず、成果物にも入らない。外へ出るのは数値の表だけ。
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 
@@ -25,9 +31,13 @@ const QUERIES = [
   'intitle:Mon japanese crest filemime:image/svg+xml',
 ]
 
+/** 測定専用モードでは CC BY-SA まで受け入れる。 */
+const MEASURE_ONLY = process.env.KAMON_MEASURE_ONLY === '1'
+
 /** パブリックドメインと CC0 だけ。判定できないものは落とす。 */
 function isFree(license: string, usage: string): boolean {
   const k = `${license} ${usage}`.toLowerCase()
+  if (MEASURE_ONLY && (k.includes('cc by') || k.includes('creative commons'))) return true
   if (k.includes('cc0') || k.includes('public domain') || k.includes('pd-')) return true
   // 「PD」を含むだけの表記（PD-self, PD-Japan-organization など）も許す
   return /\bpd\b/.test(k)
@@ -128,9 +138,19 @@ const manifest: Array<{ file: string; title: string; license: string; url: strin
 let n = 0
 for (const f of picked) {
   // クエリを落として原本を取る。付けたままだと弾かれるものがある
-  const res = await fetch(f.url.replace(/\?.*$/, ''), { headers: { 'User-Agent': UA } })
-  if (!res.ok) continue
-  const svg = await res.text()
+  const src = f.url.replace(/\?.*$/, '')
+  let svg = ''
+  for (let t = 0; t < 4; t++) {
+    const res = await fetch(src, { headers: { 'User-Agent': UA } })
+    if (res.ok) {
+      svg = await res.text()
+      break
+    }
+    // 連投すると 429 が返る。待たずに諦めると母数が静かに減る
+    if (res.status !== 429) break
+    await new Promise((r) => setTimeout(r, 3000 * (t + 1)))
+  }
+  if (!svg) continue
   // 中身が SVG でないものは落とす（リダイレクト先が HTML のことがある）
   if (!/<svg[\s>]/i.test(svg)) continue
   const file = `k${String(++n).padStart(3, '0')}.svg`
@@ -139,7 +159,10 @@ for (const f of picked) {
 }
 
 // 出どころを残す。どの図形からどの係数を導いたかを後から追えるようにする
-writeFileSync(`${OUT}/manifest.json`, `${JSON.stringify(manifest, null, 2)}\n`)
+writeFileSync(
+  `${OUT}/manifest.json`,
+  `${JSON.stringify({ measureOnly: MEASURE_ONLY, files: manifest }, null, 2)}\n`,
+)
 console.log(`\n${manifest.length} 点を ${OUT}/ へ保存しました`)
 const byLicense = new Map<string, number>()
 for (const m of manifest) byLicense.set(m.license, (byLicense.get(m.license) ?? 0) + 1)
