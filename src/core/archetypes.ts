@@ -156,6 +156,69 @@ export function resolveArchetype(input: string): ArchetypeId | null {
   return null
 }
 
+export const ENCLOSURES = ['none', 'ring', 'double', 'hex', 'square', 'diamond'] as const
+export type EnclosureId = (typeof ENCLOSURES)[number]
+
+/**
+ * 囲いの別名。
+ *
+ * 完全一致だけを見て、外れたら "none" に倒していた。すると「方形フレーム」
+ * という名前の案から囲いが消え、名前だけ残って形が伴わなくなる（実際に
+ * 起きた）。黙って落とすより寄せる方がよいのは型名と同じ。
+ */
+const ENCLOSURE_ALIASES: Record<string, EnclosureId> = {
+  // 丸
+  circle: 'ring',
+  round: 'ring',
+  round_frame: 'ring',
+  o: 'ring',
+  丸: 'ring',
+  円: 'ring',
+  // 二重丸
+  doublering: 'double',
+  'double-ring': 'double',
+  twin: 'double',
+  二重丸: 'double',
+  二重: 'double',
+  // 亀甲
+  hexagon: 'hex',
+  hexagonal: 'hex',
+  honeycomb: 'hex',
+  亀甲: 'hex',
+  六角: 'hex',
+  六角形: 'hex',
+  // 角（正方形）
+  box: 'square',
+  rect: 'square',
+  rectangle: 'square',
+  frame: 'square',
+  角: 'square',
+  方形: 'square',
+  正方形: 'square',
+  四角: 'square',
+  // 隅立て角（菱）
+  rhombus: 'diamond',
+  rhomb: 'diamond',
+  lozenge: 'diamond',
+  菱: 'diamond',
+  隅立て角: 'diamond',
+  // 囲わない
+  plain: 'none',
+  なし: 'none',
+  無し: 'none',
+}
+
+/** 囲いの名前を解決する。完全一致 → 別名 → 部分一致 の順。 */
+export function resolveEnclosure(input: string): EnclosureId {
+  const key = input.trim().toLowerCase().replace(/[\s_-]+/g, '')
+  if ((ENCLOSURES as readonly string[]).includes(key)) return key as EnclosureId
+  if (ENCLOSURE_ALIASES[key]) return ENCLOSURE_ALIASES[key]
+  for (const [alias, id] of Object.entries(ENCLOSURE_ALIASES)) {
+    if (key.length > 1 && key.includes(alias)) return id
+  }
+  return 'none'
+}
+
 export const archetypeParamsSchema = z.object({
   // enum ではなく string + 別名解決。enum を載せてもモデルは一覧外の名前を
   // 返してくるので、弾くより寄せる方が実測で速く安い。
@@ -211,11 +274,11 @@ export const archetypeParamsSchema = z.object({
     .optional()
     .transform((v) => {
       const k = typeof v === 'string' ? v.trim().toLowerCase() : ''
-      return k === 'ring' || k === 'double' || k === 'hex' || k === 'diamond'
-        ? (k as 'ring' | 'double' | 'hex' | 'diamond')
-        : ('none' as const)
+      return resolveEnclosure(k)
     })
-    .describe('none / ring（丸に）/ double（二重丸に）/ hex（亀甲に）/ diamond（隅立て角に）'),
+    .describe(
+      'none / ring（丸に）/ double（二重丸に）/ hex（亀甲に）/ square（角に）/ diamond（隅立て角に）',
+    ),
   /**
    * モチーフの反復数。三つ盛・三つ寄せのように、同じ形を等配置すると
    * 律動が生まれて紋になる。1 なら反復しない。
@@ -850,13 +913,15 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
 
     // 丸だけだと、どの主題でも同じ輪になって案が並ばない。家紋にも
     // 亀甲・隅立て角があり、囲いの形そのものが性格を持つ
-    const poly = params.enclosure === 'hex' ? 6 : params.enclosure === 'diamond' ? 4 : 0
+    const poly = params.enclosure === 'hex' ? 6 : params.enclosure === 'diamond' || params.enclosure === 'square' ? 4 : 0
+    // 正方形は辺を水平に置く（頂点を上に置くと隅立て角になる）
+    const turn = params.enclosure === 'square' ? Math.PI / 4 : 0
     const rings: Shape[] =
       poly === 0
         ? [{ kind: 'ring', id: 'encl', cx: 0, cy: 0, r: outer, w }]
         : [
-            { kind: 'poly', id: 'encl', points: polygon(poly, round(outer + w / 2), 0) },
-            { kind: 'poly', id: 'enclHole', points: polygon(poly, round(outer - w / 2), 0) },
+            { kind: 'poly', id: 'encl', points: polygon(poly, round(outer + w / 2), turn) },
+            { kind: 'poly', id: 'enclHole', points: polygon(poly, round(outer - w / 2), turn) },
           ]
     // 内側は細く。同じ太さで二本引くと重く、輪の内外が読めなくなる。
     // 輪がモチーフに寄っているときは二本目が入らないので、そのときは引かない

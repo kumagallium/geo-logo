@@ -6,6 +6,7 @@ import {
   WEIGHTS,
   buildFromArchetype,
   resolveArchetype,
+  resolveEnclosure,
   type ArchetypeParams,
 } from './archetypes'
 import { compile } from './index'
@@ -221,5 +222,54 @@ describe('囲いと反復', () => {
     expect(three.built.parts.length).toBe(3)
     expect(one.built.parts.length).toBe(1)
     expect(three.built.artBounds.width).toBeGreaterThan(one.built.artBounds.width)
+  })
+})
+
+describe('囲いの名前解決', () => {
+  // 完全一致だけを見て外れたら "none" に倒していた。すると「方形フレーム」
+  // という名前の案から囲いが消え、名前だけ残って形が伴わなくなる。
+  it('綴りや言い方の違いを正規の値へ寄せる', () => {
+    const cases: Array<[string, string]> = [
+      ['ring', 'ring'],
+      ['circle', 'ring'],
+      ['丸', 'ring'],
+      ['double-ring', 'double'],
+      ['二重丸', 'double'],
+      ['hexagon', 'hex'],
+      ['亀甲', 'hex'],
+      ['honeycomb', 'hex'],
+      ['square', 'square'],
+      ['box', 'square'],
+      ['正方形', 'square'],
+      ['方形フレーム', 'square'],
+      ['rhombus', 'diamond'],
+      ['隅立て角', 'diamond'],
+      ['none', 'none'],
+      ['', 'none'],
+    ]
+    const wrong = cases.filter(([input, want]) => resolveEnclosure(input) !== want)
+    expect(wrong.map(([i, w]) => `${i} → ${resolveEnclosure(i)}（期待 ${w}）`)).toEqual([])
+  })
+
+  it('square と diamond は別の形になる（向きが違う）', () => {
+    const of = (enclosure: 'square' | 'diamond') =>
+      compile(
+        buildFromArchetype({
+          name: 'x',
+          concept: 'x',
+          params: {
+            archetype: 'leaf',
+            ratio: 'golden',
+            weight: 'regular',
+            count: 3,
+            span: 180,
+            orientation: 0,
+            accent: false,
+            enclosure,
+            repeat: 1,
+          },
+        }),
+      ).built.parts.map((p) => p.pathData).join('')
+    expect(of('square')).not.toBe(of('diamond'))
   })
 })
