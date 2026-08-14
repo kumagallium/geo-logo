@@ -70,6 +70,23 @@ function areaOf(item: paper.PathItem): number {
   return Math.abs((item as unknown as { area?: number }).area ?? 0)
 }
 
+/**
+ * ブーリアン演算の結果をパスデータ経由で作り直す。
+ *
+ * paper.js は unite を重ねた CompoundPath の内部構造が不整合になることがあり、
+ * その図形をさらにブーリアン演算へ渡すと **結果が黙って空になる**。
+ * 実測: 丸キャップ付きの円弧（band ∩ wedge に cap 円を 2 回 unite したもの）を
+ * ヴェシカと unite すると面積 0 になった。reorient() では直らず、
+ * パスデータから作り直すと解消する。
+ *
+ * プリミティブ生成の中で合成を行うもの（ring / round cap の bar / arc）に適用する。
+ */
+function rebuild(p: PaperCore, item: paper.PathItem): paper.PathItem {
+  const data = item.pathData
+  item.remove()
+  return data ? new p.CompoundPath(data) : new p.Path()
+}
+
 export function build(design: LogoDesign): BuildResult {
   const p = getPaper()
   resetProject()
@@ -338,7 +355,7 @@ function makePrimitive(p: PaperCore, s: Shape): paper.PathItem | null {
       const result = outer.subtract(inner)
       outer.remove()
       inner.remove()
-      return result
+      return rebuild(p, result)
     }
 
     case 'bar': {
@@ -359,15 +376,20 @@ function makePrimitive(p: PaperCore, s: Shape): paper.PathItem | null {
 
       if (s.cap !== 'round') return body
 
-      const capA = new p.Path.Circle(a, s.w / 2)
-      const capB = new p.Path.Circle(b, s.w / 2)
+      // キャップ円は帯の内外エッジにちょうど接する退化配置になり、
+      // ブーリアン演算が不安定になる（実測: w=0.4 で空、0.5 では正常という
+      // 不規則な失敗）。1% だけ大きくして「接触」を「重なり」に変える。
+      // 見た目の差は線幅の 1% なので識別できない。
+      const capR = (s.w / 2) * 1.02
+      const capA = new p.Path.Circle(a, capR)
+      const capB = new p.Path.Circle(b, capR)
       const withA = body.unite(capA)
       const result = withA.unite(capB)
       body.remove()
       capA.remove()
       capB.remove()
       withA.remove()
-      return result
+      return rebuild(p, result)
     }
 
     case 'rect': {
@@ -425,7 +447,7 @@ function makePrimitive(p: PaperCore, s: Shape): paper.PathItem | null {
       inner.remove()
 
       const span = ((s.a1 - s.a0) * Math.PI) / 180
-      if (Math.abs(span) >= Math.PI * 2 - 1e-9) return band
+      if (Math.abs(span) >= Math.PI * 2 - 1e-9) return rebuild(p, band)
 
       const sector = makePrimitive(p, {
         kind: 'wedge',
@@ -445,21 +467,26 @@ function makePrimitive(p: PaperCore, s: Shape): paper.PathItem | null {
       band.remove()
       sector.remove()
 
-      if (s.cap !== 'round') return clipped
+      if (s.cap !== 'round') return rebuild(p, clipped)
 
       const at = (deg: number) => {
         const rad = (deg * Math.PI) / 180
         return center.add(new p.Point(Math.cos(rad) * s.r, Math.sin(rad) * s.r))
       }
-      const capA = new p.Path.Circle(at(s.a0), s.w / 2)
-      const capB = new p.Path.Circle(at(s.a1), s.w / 2)
+      // キャップ円は帯の内外エッジにちょうど接する退化配置になり、
+      // ブーリアン演算が不安定になる（実測: w=0.4 で空、0.5 では正常という
+      // 不規則な失敗）。1% だけ大きくして「接触」を「重なり」に変える。
+      // 見た目の差は線幅の 1% なので識別できない。
+      const capR = (s.w / 2) * 1.02
+      const capA = new p.Path.Circle(at(s.a0), capR)
+      const capB = new p.Path.Circle(at(s.a1), capR)
       const withA = clipped.unite(capA)
       const result = withA.unite(capB)
       clipped.remove()
       capA.remove()
       capB.remove()
       withA.remove()
-      return result
+      return rebuild(p, result)
     }
 
     case 'poly': {

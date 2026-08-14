@@ -57,7 +57,7 @@ try {
   })
 
   const { design, built, notes, warnings, constraintErrors, logoSvg, blueprintSvg } =
-    compile(outcome.result.design)
+    outcome.result
 
   console.log('---')
   console.log('name       :', design.name)

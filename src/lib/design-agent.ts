@@ -1,5 +1,7 @@
 import { generateObject, type LanguageModel } from 'ai'
-import { compile, designSchema, type CompileResult, type LogoDesign } from '../core/index'
+import { z } from 'zod'
+import { archetypeParamsSchema, buildFromArchetype } from '../core/archetypes'
+import { compile, type CompileResult } from '../core/index'
 import { CodedError } from './ai-error-codes'
 import { repairPrompt, SYSTEM_PROMPT, userPrompt } from './design-prompt'
 
@@ -13,6 +15,19 @@ export type DesignOutcome = {
   result: CompileResult
   attempts: DesignAttempt[]
 }
+
+/**
+ * モデルに書かせるのは「型の選択」だけ。幾何は core/archetypes.ts が生成する。
+ * DSL 全体を書かせていた頃は、参照切れ・浮いた要素・濁った寸法が頻発した。
+ */
+// 入れ子にせず平坦にする。params で括ると、モデルはパラメータを最上位へ
+// 置いてしまい初回が必ず検証で落ちていた（実測）。構造は浅いほど間違えない。
+export const designPlanSchema = archetypeParamsSchema.extend({
+  name: z.string().min(1).max(40),
+  concept: z.string().min(1).max(600),
+})
+
+export type DesignPlan = z.infer<typeof designPlanSchema>
 
 const MAX_ATTEMPTS = 3
 
@@ -45,10 +60,10 @@ export async function designLogo(
     try {
       const generated = await generateObject({
         model,
-        schema: designSchema,
+        schema: designPlanSchema,
         system: SYSTEM_PROMPT,
         prompt,
-        maxOutputTokens: 16000,
+        maxOutputTokens: 4000,
       })
       object = generated.object
     } catch (err) {
@@ -63,11 +78,14 @@ export async function designLogo(
       continue
     }
 
-    const result = compile(object as LogoDesign)
+    const plan = object as DesignPlan
+    const result = compile(
+      buildFromArchetype({ name: plan.name, concept: plan.concept, params: plan }),
+    )
     lastResult = result
 
     const found = diagnose(result)
-    attempts.push({ index: i, problems: withReferenceHint(found, result.design) })
+    attempts.push({ index: i, problems: found })
     if (found.length === 0) break
   }
 
@@ -123,28 +141,14 @@ export function describeValidationFailure(err: unknown): string {
   }
   walk(err, 0)
 
-  if (lines.length > 0) return lines.join('\n')
+  // AI SDK は生成できなかった生テキストを text に載せる。zod の issues だけでは
+  // 「何を返したのか」が分からず直しようがないので、併せて返す。
+  const raw = (err as { text?: unknown })?.text
+  const sample = typeof raw === 'string' && raw ? `\n実際の出力: ${raw.slice(0, 400)}` : ''
+
+  if (lines.length > 0) return lines.join('\n') + sample
   const message = err instanceof Error ? err.message : String(err ?? '')
-  return message.slice(0, 500)
-}
-
-/**
- * 参照切れが出たときは、使える id を具体的に並べて返す。
- *
- * 「参照 "mountain" が存在しない」だけだと、モデルは何に直せばよいか分からず
- * 同じ間違いを繰り返す。実在する id を見せると 1 回で直せる。
- */
-function withReferenceHint(problems: string[], design: LogoDesign): string[] {
-  if (problems.length === 0) return problems
-  if (!problems.some((p) => p.includes('参照'))) return problems
-
-  const shapeIds = design.shapes.map((s) => s.id)
-  const groupIds = design.groups.map((g) => g.id)
-  return [
-    ...problems,
-    `ref に使える id は次のものだけです — shapes: ${shapeIds.join(', ') || '(なし)'}` +
-      (groupIds.length > 0 ? ` / groups: ${groupIds.join(', ')}` : ''),
-  ]
+  return message.slice(0, 500) + sample
 }
 
 /** ビルド結果が幾何として成立しているかの機械判定 */

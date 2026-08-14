@@ -1,6 +1,8 @@
 import { MockLanguageModelV3 } from 'ai/test'
 import { describe, expect, it } from 'vitest'
-import { describeValidationFailure, designLogo } from './design-agent'
+import { ARCHETYPES } from '../core/archetypes'
+import { describeValidationFailure, designLogo, designPlanSchema } from './design-agent'
+import { SYSTEM_PROMPT } from './design-prompt'
 
 /**
  * 修復リトライは 2 種類の失敗を扱う必要がある:
@@ -12,32 +14,24 @@ import { describeValidationFailure, designLogo } from './design-agent'
  * 本当の原因が見えなくなるので、そこは即座に投げ直す。
  */
 
+/** 妥当な計画。アーキタイプとパラメータだけを返す。 */
 const VALID = {
-  name: 'Test',
-  concept: 'テスト用',
-  shapes: [
-    { kind: 'circle', id: 'a', cx: 0, cy: -0.8, r: 1.618 },
-    { kind: 'circle', id: 'b', cx: 0, cy: 0.8, r: 1.618 },
-  ],
-  parts: [
-    { id: 'p', steps: [{ op: 'add', ref: 'a' }, { op: 'intersect', ref: 'b' }] },
-  ],
+  name: 'Test Mark',
+  concept: 'テスト用の計画',
+  archetype: 'leaf',
+  ratio: 'golden',
+  weight: 'regular',
+  count: 3,
+  span: 180,
+  orientation: 0,
+  accent: false,
 }
 
-/** 色が 16 進でない = 厳格化したスキーマに弾かれる典型 */
-const INVALID_COLOR = {
-  ...VALID,
-  palette: { primary: 'black', secondary: '#888', accent: '#c00', background: '#fff' },
-}
+/** 存在しない型を指した計画 = スキーマ検証で弾かれる典型 */
+const INVALID_ARCHETYPE = { ...VALID, archetype: 'xyzzy-nonsense' }
 
-/** 幾何としては破綻（2 円が離れていて intersect が空になる） */
-const EMPTY_INTERSECT = {
-  ...VALID,
-  shapes: [
-    { kind: 'circle', id: 'a', cx: -20, cy: 0, r: 1 },
-    { kind: 'circle', id: 'b', cx: 20, cy: 0, r: 1 },
-  ],
-}
+/** 範囲外のパラメータ */
+const OUT_OF_RANGE = { ...VALID, count: 99 }
 
 /** 応答を順に返すモックモデル。呼ばれたプロンプトを記録する。 */
 function mockModel(responses: Array<object | Error>) {
@@ -68,7 +62,7 @@ function mockModel(responses: Array<object | Error>) {
 
 describe('designLogo の修復リトライ', () => {
   it('スキーマ検証に落ちても再試行し、次が通れば成功する', async () => {
-    const { model, prompts, callCount } = mockModel([INVALID_COLOR, VALID])
+    const { model, prompts, callCount } = mockModel([INVALID_ARCHETYPE, VALID])
     const outcome = await designLogo('テスト', model)
 
     expect(callCount()).toBe(2)
@@ -78,8 +72,8 @@ describe('designLogo の修復リトライ', () => {
     expect(prompts[1]).toContain('直前の出力に次の問題がありました')
   })
 
-  it('幾何の破綻でも再試行する（従来からの経路）', async () => {
-    const { model, callCount } = mockModel([EMPTY_INTERSECT, VALID])
+  it('パラメータが範囲外でも再試行して回復する', async () => {
+    const { model, callCount } = mockModel([OUT_OF_RANGE, VALID])
     const outcome = await designLogo('テスト', model)
 
     expect(callCount()).toBe(2)
@@ -87,8 +81,18 @@ describe('designLogo の修復リトライ', () => {
     expect(outcome.attempts.at(-1)?.problems).toEqual([])
   })
 
+  it('妥当な計画からは必ず幾何の破綻しない設計が出る', async () => {
+    // アーキタイプ方式の要点。モデルが型を選べさえすれば、幾何は保証される。
+    const { model } = mockModel([VALID])
+    const outcome = await designLogo('テスト', model)
+    expect(outcome.result.warnings).toEqual([])
+    expect(outcome.result.constraintErrors).toEqual([])
+    expect(outcome.result.built.unrelated).toEqual([])
+    expect(outcome.result.built.collapsedTo).toBeNull()
+  })
+
   it('毎回スキーマに落ちるなら DESIGN_STRUCTURE_FAILED で終わる', async () => {
-    const { model, callCount } = mockModel([INVALID_COLOR])
+    const { model, callCount } = mockModel([INVALID_ARCHETYPE])
     await expect(designLogo('テスト', model)).rejects.toMatchObject({
       code: 'DESIGN_STRUCTURE_FAILED',
     })
@@ -113,6 +117,26 @@ describe('designLogo の修復リトライ', () => {
     expect(callCount()).toBe(1)
     expect(outcome.attempts).toHaveLength(1)
     expect(outcome.attempts[0].problems).toEqual([])
+  })
+})
+
+describe('プロンプトとスキーマの整合', () => {
+  /**
+   * スキーマを平坦化した後もプロンプトが params 入れ子を指示したままで、
+   * 毎回 1 回目の生成が検証に落ちていた（＝API コストが常に 2 倍）。
+   * 型検査では捕まらないので、プロンプト中の出力例を実際に検証する。
+   */
+  it('プロンプトの出力例が designPlanSchema をそのまま通る', () => {
+    const start = SYSTEM_PROMPT.indexOf('{')
+    const end = SYSTEM_PROMPT.lastIndexOf('}')
+    expect(start).toBeGreaterThan(-1)
+
+    const example = JSON.parse(SYSTEM_PROMPT.slice(start, end + 1))
+    expect(() => designPlanSchema.parse(example)).not.toThrow()
+  })
+
+  it('プロンプトが実在するアーキタイプだけを提示している', () => {
+    for (const id of ARCHETYPES) expect(SYSTEM_PROMPT).toContain(id)
   })
 })
 
