@@ -516,6 +516,48 @@ export function enforceHierarchy(pieces: Piece[], ratio: Composition['ratio']): 
   return pieces.map((p) => (p === first ? { ...p, size: grown } : p))
 }
 
+/**
+ * 軸へ寄せる。
+ *
+ * 家紋 390 点の 80% は左右対称で、ロゴ全般も対称が多い。ところがモデルが
+ * 出す座標は連続値なので、対称のつもりでも軸から僅かにずれる。
+ * 「ほとんど対称、でも少しずれている」は、対称でも非対称でもない中途半端
+ * な見え方になり、どちらより悪い。
+ *
+ * 軸の近くにある部品は軸へ乗せ、鏡の相手が居る部品は相手と正確に揃える。
+ */
+export function snapToAxis(pieces: Piece[]): Piece[] {
+  const span = Math.max(...pieces.map((p) => Math.abs(p.x) + p.size), 1)
+  const near = span * 0.08
+
+  const out = pieces.map((p) => ({ ...p }))
+  for (const p of out) {
+    if (Math.abs(p.x) < near) p.x = 0
+  }
+  // 鏡の相手を探す。x の符号が逆で、y と大きさが近いもの
+  for (let i = 0; i < out.length; i++) {
+    if (out[i].x === 0) continue
+    for (let j = i + 1; j < out.length; j++) {
+      const a = out[i]
+      const b = out[j]
+      if (a.x * b.x >= 0) continue
+      if (Math.abs(Math.abs(a.x) - Math.abs(b.x)) > near) continue
+      if (Math.abs(a.y - b.y) > near) continue
+      if (Math.abs(a.size - b.size) > Math.max(a.size, b.size) * 0.25) continue
+      // 大きい方に揃える。小さい方へ寄せると全体が痩せる
+      const x = Math.max(Math.abs(a.x), Math.abs(b.x))
+      const y = (a.y + b.y) / 2
+      const size = Math.max(a.size, b.size)
+      a.x = Math.sign(a.x) * x
+      b.x = Math.sign(b.x) * x
+      a.y = b.y = round(y)
+      a.size = b.size = round(size)
+      break
+    }
+  }
+  return out
+}
+
 export function buildFromComposition(plan: CompositionPlan): LogoDesign {
   const parsed = compositionSchema.parse(plan)
 
@@ -529,7 +571,9 @@ export function buildFromComposition(plan: CompositionPlan): LogoDesign {
 
   // 寸法を整えてから位置を直す。順序が逆だと、寄せた部品を寸法変更で
   // 引き剥がしてしまう。
-  const systematic = enforceHierarchy(snapToLadder(expanded, parsed.ratio), parsed.ratio)
+  const systematic = snapToAxis(
+    enforceHierarchy(snapToLadder(expanded, parsed.ratio), parsed.ratio),
+  )
 
   // 内へ寄せてから外へ出す。順序が逆だと、押し出した部品を寄せ戻してしまう。
   const pulled = repairConnectivity(systematic, parsed.ratio).pieces

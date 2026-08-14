@@ -7,6 +7,7 @@ import {
   repairConnectivity,
   repairVisibility,
   resolveForm,
+  snapToAxis,
   type Piece,
 } from './composition'
 import { compile } from './index'
@@ -216,4 +217,51 @@ describe('でたらめな配置でも構成として成立する', () => {
     // 120 通りのブーリアン演算は既定の 5 秒に収まらない。手元では約 2 秒だが、
     // CI のランナーはもっと遅く、実際に超えて落ちた。
   }, 60_000)
+})
+
+const base = {
+  label: '',
+  form: 'disc' as const,
+  role: 'add' as const,
+  x: 0,
+  y: 0,
+  size: 1,
+  angle: 0,
+  span: 180,
+  thickness: 'regular' as const,
+  mirror: false,
+}
+
+describe('軸へ寄せる', () => {
+  // 「ほとんど対称、でも少しずれている」は、対称でも非対称でもない
+  // 中途半端な見え方になり、どちらより悪い。
+  it('軸の近くの部品は軸に乗る', () => {
+    const out = snapToAxis([
+      { ...base, x: 0.06, y: 0, size: 2 },
+      { ...base, x: 1.8, y: 0.5, size: 0.6 },
+    ])
+    expect(out[0].x).toBe(0)
+    expect(out[1].x).toBe(1.8)
+  })
+
+  it('鏡の相手どうしが正確に揃う', () => {
+    const out = snapToAxis([
+      { ...base, x: 0, y: 0, size: 2 },
+      { ...base, x: 1.2, y: 0.4, size: 0.5 },
+      { ...base, x: -1.14, y: 0.46, size: 0.54 },
+    ])
+    expect(out[1].x).toBe(-out[2].x)
+    expect(out[1].y).toBe(out[2].y)
+    expect(out[1].size).toBe(out[2].size)
+  })
+
+  it('明らかに対応しない部品は動かさない', () => {
+    const out = snapToAxis([
+      { ...base, x: 0, y: 0, size: 3 },
+      { ...base, x: 2.4, y: -1.5, size: 0.4 },
+      { ...base, x: -2.3, y: 1.9, size: 1.6 },
+    ])
+    expect(out[1].y).toBe(-1.5)
+    expect(out[2].size).toBe(1.6)
+  })
 })
