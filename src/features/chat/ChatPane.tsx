@@ -72,11 +72,15 @@ export default function ChatPane({
         <textarea
           value={text}
           rows={3}
-          placeholder="例: 山と川を円弧で表した、地質調査会社のマーク"
+          placeholder="例: 山と川を円弧で表した、地質調査会社のマーク（⌘/Ctrl + Enter で送信）"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            // 改行は Shift+Enter。送信を主にする
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key !== 'Enter') return
+            // 変換中の確定を送信として拾わない。日本語入力では Enter が
+            // 「漢字を確定する」ためのキーで、送信の意図とは限らない
+            if (e.nativeEvent.isComposing) return
+            // 送信は修飾キー付きだけ。Enter そのものは改行
+            if (e.metaKey || e.ctrlKey) {
               e.preventDefault()
               submit()
             }
