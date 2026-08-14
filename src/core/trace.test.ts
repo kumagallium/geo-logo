@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { compile } from './index'
-import { fitToModule, sampleContours, traceArcs, type Vec } from './trace'
+import {
+  fitToModule,
+  parseTransform,
+  sampleContours,
+  sampleContoursFromSvg,
+  traceArcs,
+  type Vec,
+} from './trace'
 
 /** 半径 r の円を n 点で表す */
 function circlePoints(r: number, n = 360, cx = 0, cy = 0): Vec[] {
@@ -104,5 +111,49 @@ describe('contour シェイプ', () => {
     // 円弧 1 本につき作図円が 1 つ出る
     const circles = result.built.construction.filter((c) => c.kind === 'circle')
     expect(circles.length).toBeGreaterThanOrEqual(segments.length)
+  })
+})
+
+describe('parseTransform', () => {
+  /**
+   * 素材の SVG はトレース生成物が多く、scale(0.1,-0.1) のような上下反転を
+   * 持つ。無視すると図形が逆さまになる（実測: PhyloPic のシルエットが全反転）。
+   */
+  it('translate と scale の合成を解釈する', () => {
+    const m = parseTransform('translate(0.000000,1536.000000) scale(0.100000,-0.100000)')
+    expect(m[0]).toBeCloseTo(0.1, 6)
+    expect(m[3]).toBeCloseTo(-0.1, 6)
+    expect(m[5]).toBeCloseTo(1536, 6)
+  })
+
+  it('rotate と matrix も解釈する', () => {
+    const r = parseTransform('rotate(90)')
+    expect(r[0]).toBeCloseTo(0, 6)
+    expect(r[1]).toBeCloseTo(1, 6)
+    expect(parseTransform('matrix(2,0,0,3,4,5)')).toEqual([2, 0, 0, 3, 4, 5])
+  })
+
+  it('知らない指定は無視して単位行列に倒す', () => {
+    expect(parseTransform('skewX(20)')).toEqual([1, 0, 0, 1, 0, 0])
+    expect(parseTransform('')).toEqual([1, 0, 0, 1, 0, 0])
+  })
+})
+
+describe('sampleContoursFromSvg', () => {
+  it('transform を適用して座標を直す', () => {
+    const svg =
+      '<svg><g transform="translate(0,10) scale(1,-1)"><path d="M 0 0 L 4 0 L 4 4 Z"/></g></svg>'
+    const pts = sampleContoursFromSvg(svg, 60)[0]
+    // y 反転 + 移動なので、元の y=0..4 が y=10..6 になる
+    expect(Math.max(...pts.map((p) => p.y))).toBeCloseTo(10, 1)
+    expect(Math.min(...pts.map((p) => p.y))).toBeCloseTo(6, 1)
+  })
+
+  it('transform が複数種あるときは適用しない', () => {
+    // 入れ子の異なる変換は扱わない。bbox 正規化に委ねる
+    const svg =
+      '<svg><g transform="scale(2)"><path d="M 0 0 L 4 0 L 4 4 Z"/></g>' +
+      '<g transform="scale(3)"><path d="M 8 0 L 9 0 L 9 1 Z"/></g></svg>'
+    expect(sampleContoursFromSvg(svg, 60).length).toBeGreaterThan(0)
   })
 })

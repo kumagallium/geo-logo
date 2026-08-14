@@ -8,18 +8,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Shape, Step } from '../src/core/index.js'
 import { compile } from '../src/core/index.js'
-import { fitToModule, sampleContours, traceArcs } from '../src/core/trace.js'
+import { fitToModule, sampleContoursFromSvg, traceArcs } from '../src/core/trace.js'
 
 const [file, out = 'trace', arcs = '12'] = process.argv.slice(2)
 const svg = readFileSync(file, 'utf8')
 
-const paths = [...svg.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1])
-if (paths.length === 0) {
-  console.error('パスが見つかりませんでした')
-  process.exit(1)
-}
-
-const contours = fitToModule(sampleContours(paths.join(' ')))
+const contours = fitToModule(sampleContoursFromSvg(svg))
 if (contours.length === 0) {
   console.error('輪郭を取得できませんでした')
   process.exit(1)

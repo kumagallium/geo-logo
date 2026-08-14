@@ -21,6 +21,81 @@ import { radiusCandidates, snap } from './units'
 export type Vec = { x: number; y: number }
 export type ContourSegment = Contour['segments'][number]
 
+/** SVG の変換行列 [a b c d e f] */
+type Matrix = [number, number, number, number, number, number]
+
+const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0]
+
+function multiply(m: Matrix, n: Matrix): Matrix {
+  return [
+    m[0] * n[0] + m[2] * n[1],
+    m[1] * n[0] + m[3] * n[1],
+    m[0] * n[2] + m[2] * n[3],
+    m[1] * n[2] + m[3] * n[3],
+    m[0] * n[4] + m[2] * n[5] + m[4],
+    m[1] * n[4] + m[3] * n[5] + m[5],
+  ]
+}
+
+const applyMatrix = (m: Matrix, p: Vec): Vec => ({
+  x: m[0] * p.x + m[2] * p.y + m[4],
+  y: m[1] * p.x + m[3] * p.y + m[5],
+})
+
+/**
+ * transform 属性を行列に直す。translate / scale / rotate / matrix に対応。
+ *
+ * 素材の SVG はトレース生成物が多く、`scale(0.1,-0.1)` のような上下反転を
+ * 持つことがある。無視すると図形が逆さまになる（実測: PhyloPic の
+ * シルエットが全て反転した）。
+ */
+export function parseTransform(value: string): Matrix {
+  let m = IDENTITY
+  for (const call of value.matchAll(/(translate|scale|rotate|matrix)\s*\(([^)]*)\)/g)) {
+    const n = call[2]
+      .split(/[\s,]+/)
+      .map(Number)
+      .filter((v) => Number.isFinite(v))
+    switch (call[1]) {
+      case 'translate':
+        m = multiply(m, [1, 0, 0, 1, n[0] ?? 0, n[1] ?? 0])
+        break
+      case 'scale':
+        m = multiply(m, [n[0] ?? 1, 0, 0, n[1] ?? n[0] ?? 1, 0, 0])
+        break
+      case 'rotate': {
+        const rad = ((n[0] ?? 0) * Math.PI) / 180
+        const c = Math.cos(rad)
+        const s = Math.sin(rad)
+        m = multiply(m, [c, s, -s, c, 0, 0])
+        break
+      }
+      case 'matrix':
+        if (n.length >= 6) m = multiply(m, n.slice(0, 6) as Matrix)
+        break
+    }
+  }
+  return m
+}
+
+/**
+ * SVG テキストから輪郭を取り出す。
+ *
+ * 入れ子の異なる transform には対応しない（素材としては稀で、対応させると
+ * XML の完全な解析が要る）。ファイル内の transform が 1 種類のときだけ
+ * 適用し、複数種あるときは無視して bbox 正規化に委ねる。
+ */
+export function sampleContoursFromSvg(svgText: string, count = 720): Vec[][] {
+  const paths = [...svgText.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1])
+  if (paths.length === 0) return []
+
+  const transforms = [...new Set([...svgText.matchAll(/\stransform="([^"]+)"/g)].map((m) => m[1]))]
+  const m = transforms.length === 1 ? parseTransform(transforms[0]) : IDENTITY
+
+  const contours = sampleContours(paths.join(' '), count)
+  return m === IDENTITY ? contours : contours.map((pts) => pts.map((p) => applyMatrix(m, p)))
+}
+
 /** 円弧 1 本が張れる最大角。180 度を超えると始点と終点だけでは形が決まらない。 */
 const MAX_SWEEP = (170 * Math.PI) / 180
 
