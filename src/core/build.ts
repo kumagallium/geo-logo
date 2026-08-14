@@ -231,7 +231,10 @@ function findUnrelatedShapes(
       const a = primitives.get(ids[i])!.clone()
       const b = primitives.get(ids[j])!.clone()
       const overlap = a.intersect(b)
-      const hit = areaOf(overlap) > 1e-6
+      // 入れ子も関係のうち。囲いの中に紋を置く「丸に◯◯」は、輪と紋が
+      // 接していなくても 1 つのマークとして読める。重なりだけを条件に
+      // すると、輪を紋に食い込ませる羽目になって形が濁る
+      const hit = areaOf(overlap) > 1e-6 || a.bounds.contains(b.bounds) || b.bounds.contains(a.bounds)
       overlap.remove()
       a.remove()
       b.remove()

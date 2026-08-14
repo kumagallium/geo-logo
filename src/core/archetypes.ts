@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { build } from './build'
+import { normalize } from './normalize'
 import type { Constraint, LogoDesign, Shape } from './dsl'
 import { PHI } from './units'
 
@@ -631,6 +633,48 @@ function placeShapes(shapes: Shape[], scale: number, dx: number, dy: number, tag
   })
 }
 
+/**
+ * 組み立て後の外形から、原点までの最遠距離を測る。
+ *
+ * シェイプの寸法から見積もると、intersect を使う型（葉・山）で大きく
+ * 過大評価する（葉は円の半径 3 に対して実寸 2.85）。囲いに収めるときは
+ * 過大評価すると必要以上に縮むので、実寸で測る。
+ */
+function builtRadius(
+  shapes: Shape[],
+  steps: Array<{ op: 'add' | 'sub' | 'intersect'; ref: string }>,
+): number {
+  try {
+    const M = 64
+    const b = build(
+      normalize({
+        name: 'probe',
+        concept: '',
+        module: M,
+        grid: 'golden',
+        palette: { primary: '#000', secondary: '#000', accent: '#000', background: '#fff' },
+        shapes,
+        constraints: [],
+        groups: [],
+        parts: [{ id: 'p', steps, fill: 'primary', mirror: 'none' }],
+      }).design,
+    ).artBounds
+    if (b.width <= 0 || b.height <= 0) return extentOf(shapes)
+    // artBounds は px なのでモジュール単位へ戻す。ここを取り違えると
+    // 64 倍の値で縮めることになり、モチーフが消える
+    return (
+      Math.max(
+        Math.hypot(b.x, b.y),
+        Math.hypot(b.x + b.width, b.y),
+        Math.hypot(b.x, b.y + b.height),
+        Math.hypot(b.x + b.width, b.y + b.height),
+      ) / M
+    )
+  } catch {
+    return extentOf(shapes)
+  }
+}
+
 /** 原点からの最遠点。囲いに収めるための粗い見積もり。 */
 function extentOf(shapes: Shape[]): number {
   const h = (x: number, y: number) => Math.hypot(x, y)
@@ -662,6 +706,53 @@ function extentOf(shapes: Shape[]): number {
   return max
 }
 
+/** 要素が互いに離れていないか。離れていると 1 つのマークに見えない。 */
+function isDisjoint(placed: {
+  shapes: Shape[]
+  constraints: Constraint[]
+  groups: Array<Array<{ op: 'add' | 'sub' | 'intersect'; ref: string }>>
+}): boolean {
+  try {
+    return (
+      build(
+        // 本番と同じく正規化を通す。素の寸法で測ると、半径の丸めで輪が
+        // ずれた分だけ判定が食い違う（実際に食い違った）
+        normalize({
+          name: 'probe',
+          concept: '',
+          module: 64,
+          grid: 'golden',
+          palette: { primary: '#000', secondary: '#000', accent: '#000', background: '#fff' },
+          shapes: placed.shapes,
+          constraints: placed.constraints,
+          groups: [],
+          parts: placed.groups.map((g, i) => ({
+            id: `p${i}`,
+            steps: g,
+            fill: 'primary' as const,
+            mirror: 'none' as const,
+          })),
+        }).design,
+      ).unrelated.length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
+/** 制約の参照先にコピーの印を付ける。 */
+function retagConstraint(c: Constraint, tag: string): Constraint {
+  const t = (ref: string) => `${ref}${tag}`
+  switch (c.type) {
+    case 'align':
+      return { ...c, ids: c.ids.map(t) }
+    case 'onCircle':
+      return { ...c, point: t(c.point), circle: t(c.circle) }
+    default:
+      return { ...c, a: t(c.a), b: t(c.b) }
+  }
+}
+
 export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
   const params = archetypeParamsSchema.parse(plan.params)
   const built = BUILDERS[params.archetype](params)
@@ -678,21 +769,41 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
   if (params.repeat > 1) {
     const n = params.repeat
     const scale = n === 3 ? 0.5 : 0.44
-    const orbit = round(R * (n === 3 ? 0.62 : 0.66))
-    const copies: Shape[] = []
-    groups = []
-    for (let i = 0; i < n; i++) {
-      // 上を起点に等配置する。下向き起点だと逆さに見える
-      const a = -Math.PI / 2 + (i * 2 * Math.PI) / n
-      const tag = `x${i}`
-      copies.push(
-        ...placeShapes(shapes, scale, round(Math.cos(a) * orbit), round(Math.sin(a) * orbit), tag),
-      )
-      groups.push(steps.map((st) => ({ ...st, ref: `${st.ref}${tag}` })))
+
+    // 配置する半径を解析で決めようとすると外す。交差型は外形が中心から
+    // ずれるうえ、方向によって幅が違うので、外接円でも外接矩形でも当たらない。
+    // 組み立てて「隣と繋がっているか」を見て詰める方が確実で、これは
+    // このコードベースが一貫して採っている「弾かずに直す」やり方でもある。
+    const place = (orbit: number) => {
+      const copies: Shape[] = []
+      const copyConstraints: Constraint[] = []
+      const copyGroups: typeof groups = []
+      for (let i = 0; i < n; i++) {
+        // 上を起点に等配置する。下向き起点だと逆さに見える
+        const a = -Math.PI / 2 + (i * 2 * Math.PI) / n
+        const tag = `x${i}`
+        copies.push(
+          ...placeShapes(shapes, scale, round(Math.cos(a) * orbit), round(Math.sin(a) * orbit), tag),
+        )
+        copyGroups.push(steps.map((st) => ({ ...st, ref: `${st.ref}${tag}` })))
+        // コピー内部の関係（同心・接する等）を写す。捨てると、元は宣言で
+        // 結ばれていた要素が浮いてしまう。コピー同士は接触で結ばれる
+        copyConstraints.push(...constraints.map((c) => retagConstraint(c, tag)))
+      }
+      return { shapes: copies, constraints: copyConstraints, groups: copyGroups }
     }
-    shapes = copies
-    // 反復すると元の参照が消えるので、制約は畳む
-    constraints = []
+
+    // 外接円から始めて、隣と繋がるまで詰める。繋がった時点で止めるので、
+    // 必要以上に重ならない（＝隙間のある盛り方を保てる）
+    let orbit = (scale * extentOf(shapes)) / Math.sin(Math.PI / n)
+    let placed = place(round(orbit))
+    for (let i = 0; i < 14 && isDisjoint(placed); i++) {
+      orbit *= 0.88
+      placed = place(round(orbit))
+    }
+    shapes = placed.shapes
+    constraints = placed.constraints
+    groups = placed.groups
   }
 
   const accent = new Set(params.accent ? (built.accentIds ?? []) : [])
@@ -716,21 +827,27 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
   // 囲い。家紋の基本構造は「丸に◯◯」で、モチーフ単体では紋にならない
   if (params.enclosure !== 'none') {
     const w = strokeOf(R, params.weight)
-    const outer = round(R * 1.5)
-    // モチーフが輪から溢れると紋にならないので、内側に収まるまで縮める
-    const inner = outer - w / 2 - w * 0.6
-    const extent = extentOf(shapes)
-    if (extent > inner) {
-      shapes = placeShapes(shapes, round(inner / extent), 0, 0, '')
-      constraints = []
-    }
+    // 輪はモチーフに寄り添わせる。固定寸法だと、小さいモチーフでは輪だけが
+    // 大きくなり、中の線が短辺に対して細くなりすぎて小サイズで消える。
+    // 本物の「丸に◯◯」も、輪と紋の間はこの程度しか空けない
+    const extent = Math.max(...parts.map((pt) => builtRadius(shapes, pt.steps)))
+    // 輪はモチーフを含み、少し余白を空ける。固定寸法だと小さいモチーフで
+    // 輪だけが大きくなり、中の線が短辺に対して細くなって小サイズで消える。
+    // 逆に接するまで詰めると輪と紋が溶けて読めなくなる（実際に濁った）
+    // 二重にするときは二本目の場所を空ける。詰めると外側と溶けて一本に見える
+    const gap = params.enclosure === 'double' ? w * 2.9 : w * 1.4
+    const outer = round(extent + gap)
 
     const rings: Shape[] = [{ kind: 'ring', id: 'encl', cx: 0, cy: 0, r: outer, w }]
-    if (params.enclosure === 'double') {
-      // 内側は細く。同じ太さで二本引くと重く、輪の内外が読めなくなる
-      rings.push({ kind: 'ring', id: 'encl2', cx: 0, cy: 0, r: round(outer - w * 1.8), w: round(w * 0.45) })
+    // 内側は細く。同じ太さで二本引くと重く、輪の内外が読めなくなる。
+    // 輪がモチーフに寄っているときは二本目が入らないので、そのときは引かない
+    const innerR = round(outer - w * 1.9)
+    const innerW = round(w * 0.45)
+    if (params.enclosure === 'double' && innerR > innerW) {
+      rings.push({ kind: 'ring', id: 'encl2', cx: 0, cy: 0, r: innerR, w: innerW })
     }
     shapes = [...shapes, ...rings]
+    if (rings.length > 1) constraints.push({ type: 'concentric', a: 'encl2', b: 'encl' })
     parts.push({
       id: 'enclosure',
       steps: rings.map((r) => ({ op: 'add' as const, ref: r.id })),
@@ -738,6 +855,37 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
       mirror: 'none',
     })
   }
+
+  // 小サイズでの下限。囲いを足すと外形が広がり、反復では縮むので、
+  // どちらも既存の線が相対的に細くなる。作図後に一度だけ底上げする
+  const floor = extentOf(shapes) * 2 * (1 / 22)
+  // 下限を負えないほど小さい環・円弧は、引いても小さいサイズで消える。
+  // 消える線は引かない方がよいので落とす（パーツが空になる場合は残す）
+  const tooSmall = new Set(
+    shapes
+      .filter((sh) => (sh.kind === 'ring' || sh.kind === 'arc') && sh.r * 0.5 < floor)
+      .map((sh) => sh.id),
+  )
+  for (const part of parts) {
+    if (part.steps.every((st) => tooSmall.has(st.ref))) {
+      for (const st of part.steps) tooSmall.delete(st.ref)
+    }
+  }
+  if (tooSmall.size > 0) {
+    shapes = shapes.filter((sh) => !tooSmall.has(sh.id))
+    constraints = constraints.filter((c) =>
+      (c.type === 'align' ? c.ids : c.type === 'onCircle' ? [c.point, c.circle] : [c.a, c.b]).every(
+        (r) => !tooSmall.has(r),
+      ),
+    )
+    for (const part of parts) part.steps = part.steps.filter((st) => !tooSmall.has(st.ref))
+  }
+
+  shapes = shapes.map((sh) =>
+    (sh.kind === 'ring' || sh.kind === 'arc' || sh.kind === 'bar') && sh.w < floor
+      ? { ...sh, w: round(Math.min(floor, sh.kind === 'bar' ? floor : sh.r * 0.5)) }
+      : sh,
+  )
 
   return {
     name: plan.name,
