@@ -220,3 +220,60 @@ export function outlineRepairPrompt(brief: string, problems: string[]): string {
 前回の出力には次の問題がありました。直してください。
 ${problems.map((p) => `- ${p}`).join('\n')}`
 }
+
+/**
+ * 一箇所だけ変えた案を作らせるプロンプト。
+ *
+ * 「もう少しこうしたい」に対して全部作り直すと、気に入っていた部分まで
+ * 変わってしまい、会話が前に進まない。土台を固定し、指摘された役割だけを
+ * 振り直す。要素を役割へ割り当ててあるので、どこを固定してどこを振るかが
+ * そのまま表現できる。
+ */
+export const VARIATION_SYSTEM_PROMPT = `あなたは幾何構成に習熟したロゴデザイナーです。
+既にあるマークに対する要望を受け、**一箇所だけを変えた案を 3 つ**作ります。
+
+## 守ること
+- **archetype（主役の型）は変えないでください。** それが土台です
+- 要望が指している役割だけを振り直す
+  - 「囲いに意味がない」「外側を変えたい」→ enclosure を 3 通り
+  - 「数を増やしたい」「律動が欲しい」→ repeat を 3 通り
+  - 「もっと力強く」「繊細に」→ weight / ratio を 3 通り
+- 3 案は**互いに十分違う**こと。似た 3 つを出すなら 1 つでよい
+
+## 案の名前
+1 案ずつに、**その案が何を意味するか**が分かる短い名前を付けてください。
+「案 A」ではなく「参照の軌道」「問いのゲート」のように、
+選ぶ人がその名前だけで方向を判断できる名前にします。
+
+## 出力
+{
+  "direction": "何を土台に、どの役割を、どう振るかを 1〜2 文で。日本語で",
+  "variants": [
+    { "label": "案の名前（16 文字以内）", "why": "その形が何を意味するかを 1 文で", "enclosure": "hex", "repeat": 1 },
+    { "label": "…", "why": "…", "enclosure": "double", "repeat": 1 },
+    { "label": "…", "why": "…", "enclosure": "none", "repeat": 3 }
+  ]
+}
+
+variants の各要素には、**変える項目だけ**を書いてください。
+書かなかった項目は元のまま引き継がれます。
+指定できるのは enclosure / repeat / ratio / weight / span / count / orientation です。
+
+JSON のみ。コードブロックや説明文は不要です。`
+
+export function variationUserPrompt(
+  brief: string,
+  current: Record<string, unknown>,
+  instruction: string,
+): string {
+  return `いま出来ているマークは次のとおりです。
+
+要件: ${brief}
+型: ${current.archetype} / 比例: ${current.ratio} / 太さ: ${current.weight}
+囲い: ${current.enclosure} / 反復: ${current.repeat}
+
+これに対する要望:
+${instruction}
+
+土台を保ったまま、要望が指している役割だけを 3 通りに振ってください。`
+}

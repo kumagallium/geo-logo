@@ -16,6 +16,8 @@ import {
 } from './composition-prompt'
 import {
   OUTLINE_SYSTEM_PROMPT,
+  VARIATION_SYSTEM_PROMPT,
+  variationUserPrompt,
   outlineRepairPrompt,
   outlineUserPrompt,
   repairPrompt,
@@ -157,6 +159,77 @@ export const STRUCTURES = [
   { name: '反復', rule: 'repeat は 3 か 4。enclosure は "none"' },
   { name: '囲って反復', rule: 'repeat は 3、enclosure は "ring" / "double" / "hex" / "diamond" から選ぶ' },
 ] as const
+
+/**
+ * 一箇所だけ変えた案。
+ *
+ * 部分の指定なので、書かれなかった項目は元の設計から引き継ぐ。全部を
+ * 書かせると、変えないはずの箇所までモデルが動かしてしまう。
+ */
+export const variationSchema = z.object({
+  direction: z.string().min(1).max(300),
+  variants: z
+    .array(
+      z
+        .object({
+          label: z.string().min(1).max(16),
+          why: z
+            .union([z.string(), z.null()])
+            .optional()
+            .transform((v) => (v ?? '').slice(0, 120)),
+        })
+        .passthrough(),
+    )
+    .min(1)
+    .max(4),
+})
+
+export type Variation = {
+  label: string
+  why: string
+  design: LogoDesign
+}
+
+/**
+ * 既にある設計に対する要望から、一箇所だけ変えた案を作る。
+ *
+ * 「もう少しこうしたい」に全部作り直しで応えると、気に入っていた部分まで
+ * 変わって会話が前に進まない。土台（型）を固定し、指摘された役割だけを振る。
+ */
+export async function varyDesign(
+  brief: string,
+  current: DesignPlan,
+  instruction: string,
+  model: LanguageModel,
+): Promise<{ direction: string; variants: Variation[] }> {
+  const { object } = await generateObject({
+    model,
+    schema: variationSchema,
+    system: VARIATION_SYSTEM_PROMPT,
+    prompt: variationUserPrompt(brief, current, instruction),
+  })
+
+  const variants: Variation[] = []
+  for (const v of object.variants) {
+    // 部分を元の設計へ重ねる。archetype は土台なので上書きさせない
+    const merged = { ...current, ...v, archetype: current.archetype }
+    const parsed = designPlanSchema.safeParse(merged)
+    if (!parsed.success) continue
+    try {
+      const design = buildFromArchetype({
+        name: v.label,
+        concept: v.why || parsed.data.concept,
+        params: parsed.data,
+      })
+      // 幾何として成立しない案は出さない。3 案のうち 1 案が壊れていると、
+      // 選ぶ側はそれを「そういう案」だと受け取ってしまう
+      if (diagnose(compile(design)).length === 0) variants.push({ label: v.label, why: v.why, design })
+    } catch {
+      // 組み立てられない案は落とす（残りの案は活かす）
+    }
+  }
+  return { direction: object.direction, variants }
+}
 
 type ModeSpec = {
   schema: z.ZodType
