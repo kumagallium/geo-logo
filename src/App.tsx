@@ -1,3 +1,4 @@
+import Studio from './features/studio/Studio'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { compile, samples, type CompileResult, type LogoDesign } from './core/index'
 import { localizeAiError, OPEN_SETTINGS_EVENT } from './lib/ai-error'
@@ -18,6 +19,7 @@ export default function App() {
   const [mode, setMode] = useState<RuntimeMode | null>(null)
   const [models, setModels] = useState<ModelSummary[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [view, setView] = useState<'generate' | 'studio'>('generate')
   // 同じブリーフから複数案を出し、人が選ぶ。構図の良否は機械判定できないため。
   const [candidates, setCandidates] = useState<LogoDesign[]>([])
   const CANDIDATE_COUNT = 4
@@ -88,6 +90,27 @@ export default function App() {
 
   return (
     <div className="app">
+      <nav className="modes">
+        {(
+          [
+            ['generate', '要件から生成'],
+            ['studio', '参照から作図'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            className={view === key ? 'modes__tab modes__tab--on' : 'modes__tab'}
+            onClick={() => setView(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {view === 'studio' && <Studio />}
+
+      {view === 'generate' && (
       <PromptBar
         busy={busy}
         mode={mode}
@@ -99,11 +122,14 @@ export default function App() {
         }}
         onOpenSettings={() => setSettingsOpen(true)}
       />
+      )}
 
-      {error && <div className="banner banner--error">{error}</div>}
-      {'error' in result && <div className="banner banner--error">DSL エラー: {result.error}</div>}
+      {view === 'generate' && error && <div className="banner banner--error">{error}</div>}
+      {view === 'generate' && 'error' in result && (
+        <div className="banner banner--error">DSL エラー: {result.error}</div>
+      )}
 
-      {compiled && (
+      {view === 'generate' && compiled && (
         <main className="workspace">
           <div className="panes">
             {candidates.length > 1 && (

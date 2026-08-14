@@ -662,6 +662,9 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
           }
           const c = arcCenter(from, seg)
           if (!c) continue
+          // ほぼ直線の弧は、半径が輪郭の何倍にもなる。その作図円を描くと
+          // 巨大な円が 1 つだけ紙面を占領し、他が潰れて見えなくなる
+          if (c.r > reach * 6) continue
 
           const key = `${Math.round(c.x * 40)}:${Math.round(c.y * 40)}:${Math.round(c.r * 40)}`
           if (!drawn.has(key)) {
