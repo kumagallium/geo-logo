@@ -10,6 +10,7 @@ import type { Shape, Step } from '../src/core/index.js'
 import { compile } from '../src/core/index.js'
 import {
   allocateArcs,
+  detectCircle,
   fitToModule,
   nestingDepth,
   sampleContoursFromSvg,
@@ -37,11 +38,23 @@ const budget = Number(arcs)
 // 本数は大きさではなく曲がりの総量で配る。小さくても複雑な抜きが潰れないように
 const quota = allocateArcs(contours, budget)
 contours.forEach((points, i) => {
-  const { segments } = traceArcs(points, { maxArcs: quota[i] })
-  if (segments.length < 3) return
   const id = `c${i}`
+  const op = traced[i].solid ? ('add' as const) : ('sub' as const)
+
+  // 円は円として持つ。円弧の列にすると 3 本に割れて食い違い、
+  // 設計図にも同じ円が 3 つ重なる
+  const circle = detectCircle(points)
+  if (circle) {
+    // 素材の形が設計そのものなので、正規化で寸法を動かさない
+    shapes.push({ kind: 'circle', id, cx: circle.cx, cy: circle.cy, r: circle.r, pinned: true })
+    steps.push({ op, ref: id })
+    return
+  }
+
+  const { segments } = traceArcs(points, tolerance ? { toleranceRatio: tolerance } : { maxArcs: quota[i] })
+  if (segments.length < 3) return
   shapes.push({ kind: 'contour', id, segments })
-  steps.push({ op: traced[i].solid ? 'add' : 'sub', ref: id })
+  steps.push({ op, ref: id })
 })
 
 // 外側から順に足し引きする。塗りを全部先に合体させてから抜くと、穴を抜いた

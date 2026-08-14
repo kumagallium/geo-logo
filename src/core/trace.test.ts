@@ -113,9 +113,11 @@ describe('contour シェイプ', () => {
     })
 
     expect(result.built.parts[0].pathData).not.toBe('')
-    // 円弧 1 本につき作図円が 1 つ出る
+    // 同じ円は 1 度しか描かない。円弧は 180 度を超えられないので 1 つの円が
+    // 複数の弧に割れ、素朴に描くと同じ円が重なって線が数倍になる
     const circles = result.built.construction.filter((c) => c.kind === 'circle')
-    expect(circles.length).toBeGreaterThanOrEqual(segments.length)
+    expect(circles.length).toBeGreaterThanOrEqual(1)
+    expect(circles.length).toBeLessThan(segments.length)
   })
 })
 

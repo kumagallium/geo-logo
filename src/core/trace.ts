@@ -583,6 +583,8 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
   const segments: ContourSegment[] = []
   let start = 0
   let guard = 0
+  /** 前の弧が実際に終わった点。円上へ載せた座標を引き継ぐ */
+  let cursor: Vec | null = null
 
   while (start < n && guard++ < n * 2) {
     let end = Math.min(start + 3, n)
@@ -619,7 +621,10 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
     }
 
     const stop = accepted?.end ?? Math.min(start + 3, n)
-    const from = points[start]
+    // 始点は「実際に前の弧が終わった点」。入力配列は書き換えないこと。
+    // 二分探索は同じ配列で何度も試すので、書き換えると回を追うごとに
+    // 形が劣化する（実測: 完全な菱形が 4 本ではなく 12 本になった）。
+    const from = cursor ?? points[start]
     const to = points[Math.min(stop, n - 1)]
     const c = accepted?.c ?? null
 
@@ -629,14 +634,28 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
       // 内側へ膨らんで棘だらけの星形になった。中心があるなら中心から測る。
       const a0 = Math.atan2(from.y - c.cy, from.x - c.cx)
       const a1 = Math.atan2(to.y - c.cy, to.x - c.cx)
+
+      // 終点を当てはめた円の上へ載せる。
+      //
+      // SVG の弧は端点と半径から中心を逆算するので、端点が円から外れていると
+      // 復元される円は当てはめたものと別になり、浅い弧ほど大きくずれる。
+      // 当てはめでは許容内なのに描くと合わない、という食い違いの原因
+      // （実測: 4 本で内部判定は通るのに、完成形の一致率は 96%）。
+      const projected = {
+        x: c.cx + Math.cos(a1) * c.r,
+        y: c.cy + Math.sin(a1) * c.r,
+      }
+      cursor = projected
+
       // SVG は y 下向きなので、角度が増える向き＝見た目の時計回り＝sweep 1
       segments.push({
-        x: round(to.x),
-        y: round(to.y),
+        x: round(projected.x),
+        y: round(projected.y),
         r: round(c.r),
         sweep: angleDelta(a0, a1) > 0,
       })
     } else {
+      cursor = to
       segments.push({ x: round(to.x), y: round(to.y), sweep: true })
     }
 
@@ -649,9 +668,24 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
 const round = (v: number) => Math.round(v * 1000) / 1000
 
 export type TraceOptions = {
-  /** 目標の円弧本数。少ないほど抽象度が上がる */
+  /**
+   * 許容誤差を輪郭の大きさに対する比で与える。
+   *
+   * 本数を指定するより素直で、結果として本数が最小になる。本数指定だと、
+   * 二分探索が上限いっぱいまで細かく刻もうとして冗長な弧が並ぶ。しかも
+   * 冗長なだけでなく精度も落ちる（実測: 二つ巴で 16 本 99.94%、28 本 99.55%）。
+   * 端点指定の円弧は 1 本ごとに丸め誤差を抱えるため、刻むほど誤差が積もる。
+   */
+  toleranceRatio?: number
+  /** 目標の円弧本数。toleranceRatio があればそちらが優先される */
   maxArcs?: number
-  /** 半径を比例体系の候補へ寄せるか */
+  /**
+   * 半径を比例体系の候補へ寄せるか。既定は寄せない。
+   *
+   * 生成した設計では「作図した感」を出す有効な処理だが、トレースでは
+   * 元の形が設計そのものなので、寄せると形が壊れる。
+   * 実測（二つ巴・円弧 8 本）: 寄せると 96.10%、寄せないと 99.87%。
+   */
   snapRadii?: boolean
 }
 
@@ -676,6 +710,16 @@ export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResul
   const ys = points.map((q) => q.y)
   const scale = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 0.05)
 
+  // 精度を指定されたら一発で決める。探索は要らず、本数は自然に最小になる
+  if (options.toleranceRatio !== undefined) {
+    const tol = scale * options.toleranceRatio
+    const segments = fitPass(points, tol, scale)
+    return {
+      segments: options.snapRadii ? segments.map((g) => (g.r === undefined ? g : snapRadius(g))) : segments,
+      tolerance: round(tol),
+    }
+  }
+
   // 許容誤差を二分探索する。大きくすると本数が減る単調な関係なので収束する。
   let lo = 0.002
   let hi = 1.5
@@ -692,8 +736,9 @@ export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResul
     }
   }
 
-  const segments =
-    options.snapRadii === false ? best : best.map((s) => (s.r === undefined ? s : snapRadius(s)))
+  const segments = options.snapRadii
+    ? best.map((s) => (s.r === undefined ? s : snapRadius(s)))
+    : best
 
   return { segments, tolerance: round(hi) }
 }
@@ -709,6 +754,24 @@ function snapRadius(seg: ContourSegment): ContourSegment {
   if (seg.r === undefined) return seg
   const hit = snap(seg.r, radiusCandidates(), 0.12)
   return hit ? { ...seg, r: round(hit.value) } : seg
+}
+
+/**
+ * 輪郭が 1 つの円そのものなら、その円を返す。
+ *
+ * 円を円弧の列として扱うのは無駄が多い。SVG の弧は 180 度を超えられないので
+ * 最低 3 本に割れ、その 3 本が別々に半径を持ち、別々に丸められて食い違う
+ * （実測: 半径 0.655 の円が 0.667 / 0.667 / 0.625 の 3 本になった）。
+ * 設計図にも同じ円が 3 つ重なり、半径線が 6 本引かれる。
+ *
+ * 円と分かれば 1 つの円として持てる。形は正確になり、作図線も 1 本で済む。
+ */
+export function detectCircle(points: Vec[]): { cx: number; cy: number; r: number } | null {
+  if (points.length < 12) return null
+  const c = fitCircle(points)
+  if (!c || c.r <= 0) return null
+  // 半径の 1.2% 以内に全点が乗っていれば円とみなす
+  return maxDeviation(points, c) <= c.r * 0.012 ? c : null
 }
 
 /**

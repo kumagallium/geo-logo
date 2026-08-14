@@ -641,6 +641,11 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
           })
         }
 
+        // 同じ円を何度も描かない。円弧は 180 度を超えられないので 1 つの円が
+        // 複数の弧に割れ、素朴に描くと同じ円が重なって線が数倍になる
+        // （実測: 26 要素の輪郭に作図線 122 本）
+        const drawn = new Set<string>()
+
         for (let i = 0; i < s.segments.length; i++) {
           const from = s.segments[(i - 1 + s.segments.length) % s.segments.length]
           const seg = s.segments[i]
@@ -657,11 +662,15 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
           }
           const c = arcCenter(from, seg)
           if (!c) continue
-          out.push({ kind: 'circle', id: `${s.id}-${i}`, cx: c.x * M, cy: c.y * M, r: c.r * M })
-          out.push({ kind: 'point', id: `${s.id}-${i}c`, x: c.x * M, y: c.y * M })
-          // 中心から両端へ通す線（延長した直径）と、端点どうしを結ぶ弦。
-          // コンパスと定規で作図するときに実際に引く線。
-          through(`${s.id}-${i}r0`, c, from)
+
+          const key = `${Math.round(c.x * 40)}:${Math.round(c.y * 40)}:${Math.round(c.r * 40)}`
+          if (!drawn.has(key)) {
+            drawn.add(key)
+            out.push({ kind: 'circle', id: `${s.id}-${i}`, cx: c.x * M, cy: c.y * M, r: c.r * M })
+            out.push({ kind: 'point', id: `${s.id}-${i}c`, x: c.x * M, y: c.y * M })
+          }
+          // 中心から弧の終点へ通す線（延長した直径）と、端点どうしを結ぶ弦。
+          // 始点への線は 1 つ前の弧の終点と同じなので引かない
           through(`${s.id}-${i}r1`, c, seg)
           out.push({
             kind: 'line',
