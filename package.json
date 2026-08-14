@@ -17,7 +17,8 @@
     "dev:web": "vite",
     "tauri": "tauri",
     "sidecar:node": "node scripts/fetch-node.mjs",
-    "sidecar:bundle": "node scripts/bundle-server.mjs"
+    "sidecar:bundle": "node scripts/bundle-server.mjs",
+    "refine": "tsx scripts/refine.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.110",
