@@ -131,6 +131,8 @@ export type SvgShape = {
   strokeWidth: number
   /** 線の役割 */
   strokePaint: Paint
+  /** 線端を丸めるか（SVG の既定は butt なので false） */
+  roundCap: boolean
 }
 
 const NAMED: Record<string, number> = {
@@ -272,6 +274,7 @@ export function collectShapes(svgText: string): SvgShape[] {
     // 線でしか描かれていない紋がある。塗りが無いからと捨てると図形が消える
     const strokePaint = stroke.trim() === '' ? 'skip' : paintOf(`<x fill="${stroke}"/>`)
     const strokeWidth = strokePaint === 'skip' ? 0 : Math.max(num(width) || 1, 0)
+    const cap = attr(tag, 'stroke-linecap') ?? tag.match(/stroke-linecap\s*:\s*([a-z]+)/)?.[1] ?? ''
     if (paint === 'skip' && strokeWidth <= 0) continue
 
     const rule = attr(tag, 'fill-rule') ?? tag.match(/fill-rule\s*:\s*([a-z]+)/)?.[1] ?? ''
@@ -282,6 +285,7 @@ export function collectShapes(svgText: string): SvgShape[] {
       paint,
       strokeWidth,
       strokePaint,
+      roundCap: cap.trim() === 'round',
     })
   }
 
@@ -298,7 +302,12 @@ export function collectShapes(svgText: string): SvgShape[] {
  * 合体は左から順にではなく二分木で畳む。円が数百個になると、逐次の合体は
  * 結果が育つほど 1 回が重くなる。
  */
-function strokeToFill(p: PaperCore, path: paper.PathItem, width: number): paper.PathItem | null {
+function strokeToFill(
+  p: PaperCore,
+  path: paper.PathItem,
+  width: number,
+  round: boolean,
+): paper.PathItem | null {
   const r = width / 2
   if (r <= 0) return null
 
@@ -308,9 +317,39 @@ function strokeToFill(p: PaperCore, path: paper.PathItem, width: number): paper.
     if (len <= 0) return
     // 刻みは半径より細かく。粗いと帯の縁が波打つ
     const step = Math.max(r * 0.6, len / 400)
-    for (let d = 0; d <= len + step; d += step) {
-      const pt = child.getPointAt(Math.min(d, len))
+
+    // 継ぎ目を丸めるための円。端に置くかどうかは線端の指定で決まる。
+    // SVG の既定は butt（端を伸ばさない）。既定のまま丸く置くと線が両端で
+    // 半径ぶん伸び、空いているべき隙間が埋まる（実測: 丸に竪三つ引で
+    // 縦棒が輪に接してしまった）。
+    const from = child.closed || round ? 0 : Math.min(r, len / 2)
+    const to = child.closed || round ? len : Math.max(len - r, len / 2)
+    for (let d = from; d <= to + step; d += step) {
+      const pt = child.getPointAt(Math.min(d, to))
       if (pt) parts.push(new p.Path.Circle(pt, r))
+    }
+
+    // butt の端は、進行方向に直交する矩形で塞ぐ
+    if (!child.closed && !round) {
+      for (const [at, sign] of [
+        [from, -1],
+        [to, 1],
+      ] as const) {
+        const pt = child.getPointAt(at)
+        const tan = child.getTangentAt(at)
+        if (!pt || !tan) continue
+        const n = new p.Point(-tan.y, tan.x).multiply(r)
+        const t = tan.multiply((r * sign) / 2)
+        const mid = pt.add(t)
+        const rect = new p.Path([
+          mid.add(n).subtract(t),
+          mid.add(n).add(t),
+          mid.subtract(n).add(t),
+          mid.subtract(n).subtract(t),
+        ])
+        rect.closed = true
+        parts.push(rect)
+      }
     }
   }
   const children = (path.children?.length ? path.children : [path]) as paper.Path[]
@@ -392,7 +431,7 @@ export function sampleContoursFromSvg(svgText: string, count = 720): TracedConto
       if (el.strokeWidth > 0) {
         // 線幅も変換の拡大率を受ける
         const scale = Math.sqrt(Math.abs(el.matrix[0] * el.matrix[3] - el.matrix[1] * el.matrix[2]))
-        const band = strokeToFill(p, item, el.strokeWidth * (scale || 1))
+        const band = strokeToFill(p, item, el.strokeWidth * (scale || 1), el.roundCap)
         if (band) apply(band, el.strokePaint)
       }
       apply(item.clone(), el.paint)

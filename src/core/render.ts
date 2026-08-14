@@ -28,6 +28,14 @@ function pad(bounds: Bounds, padding: number): Bounds {
   }
 }
 
+/**
+ * 内在寸法。viewBox だけの SVG は `<img>` に置いたとき固有の縦横比を持たず、
+ * 枠に合わせて引き伸ばされる。真円が楕円に見える原因になる。
+ */
+function sizeAttrs(b: Bounds): string {
+  return ` width="${round(b.width)}" height="${round(b.height)}"`
+}
+
 function viewBox(b: Bounds): string {
   return `${round(b.x)} ${round(b.y)} ${round(b.width)} ${round(b.height)}`
 }
@@ -61,7 +69,7 @@ export function renderLogo(
     )
     .join('\n    ')
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox(box)}" role="img" aria-label="${escapeAttr(design.name)}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox(box)}"${sizeAttrs(box)} role="img" aria-label="${escapeAttr(design.name)}">
   <title>${escapeText(design.name)}</title>
   ${bg}
   <g>
@@ -138,7 +146,7 @@ export function renderBlueprint(
 
   const labels = annotate ? buildLabels(design, ink, M, hair) : ''
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox(box)}" role="img" aria-label="${escapeAttr(design.name)} の設計図">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox(box)}"${sizeAttrs(box)} role="img" aria-label="${escapeAttr(design.name)} の設計図">
   <title>${escapeText(design.name)} — construction</title>
   ${sheet ? '' : `<rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" fill="#FBFDFF"/>`}
   <g data-layer="grid">

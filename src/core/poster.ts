@@ -103,10 +103,14 @@ export function wrapText(text: string, maxWidth: number, maxLines = 14): string[
  * ことも保たれる。
  */
 function place(svg: string, x: number, y: number, w: number, h: number): string {
-  return svg.replace(
-    /^<svg /,
-    `<svg x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" `,
-  )
+  // 内側の SVG は自前の width/height を持つ（`<img>` で引き伸ばされないため）。
+  // 紙面へ置くときは配置側の寸法が効くよう、先に落としてから付け直す
+  return svg
+    .replace(/^(<svg[^>]*?)\s+width="[^"]*"\s+height="[^"]*"/, '$1')
+    .replace(
+      /^<svg /,
+      `<svg x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" `,
+    )
 }
 
 function escapeText(s: string): string {

@@ -436,3 +436,31 @@ describe('mirrorSegments', () => {
     }
   })
 })
+
+describe('線端の扱い', () => {
+  /**
+   * SVG の既定の線端は butt（端を伸ばさない）。丸く塞ぐと線が両端で半径ぶん
+   * 伸び、空いているべき隙間が埋まる（実測: 丸に竪三つ引で縦棒が輪に接した）。
+   */
+  const bar = (cap: string) =>
+    `<svg><path fill="none" stroke="#000" stroke-width="4"${cap} d="M 10 10 L 10 30"/></svg>`
+
+  it('既定では線が伸びない', () => {
+    const pts = sampleContoursFromSvg(bar(''), 240)[0].points
+    const ys = pts.map((q) => q.y)
+    // 元の線は y=10〜30。butt なら高さは 20 のまま
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(20, 0)
+  })
+
+  it('round を指定すると両端が半径ぶん伸びる', () => {
+    const pts = sampleContoursFromSvg(bar(' stroke-linecap="round"'), 240)[0].points
+    const ys = pts.map((q) => q.y)
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(24, 0)
+  })
+
+  it('線の太さは保たれる', () => {
+    const pts = sampleContoursFromSvg(bar(''), 240)[0].points
+    const xs = pts.map((q) => q.x)
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(4, 0)
+  })
+})

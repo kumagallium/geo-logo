@@ -210,3 +210,20 @@ describe('compile', () => {
     expect(artBounds.width).toBeCloseTo(6 * design.module, 1)
   })
 })
+
+describe('内在寸法', () => {
+  /**
+   * viewBox だけの SVG は `<img>` に置いたとき固有の縦横比を持たず、枠に
+   * 合わせて引き伸ばされる。真円が楕円に見える原因になった。
+   */
+  it('完成ロゴと設計図は viewBox と一致する width / height を持つ', () => {
+    const r = compile(samples[0])
+    for (const svg of [r.logoSvg, r.blueprintSvg]) {
+      const w = Number(svg.match(/\swidth="([\d.]+)"/)?.[1])
+      const h = Number(svg.match(/\sheight="([\d.]+)"/)?.[1])
+      const vb = svg.match(/viewBox="([^"]+)"/)?.[1].split(/\s+/).map(Number) ?? []
+      expect(w).toBeCloseTo(vb[2], 3)
+      expect(h).toBeCloseTo(vb[3], 3)
+    }
+  })
+})
