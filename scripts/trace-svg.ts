@@ -13,9 +13,14 @@ import { allocateArcs, fitToModule, sampleContoursFromSvg, traceArcs } from '../
 const [file, out = 'trace', arcs = '12'] = process.argv.slice(2)
 const svg = readFileSync(file, 'utf8')
 
-const contours = fitToModule(sampleContoursFromSvg(svg))
+const traced = sampleContoursFromSvg(svg)
+const contours = fitToModule(traced.map((t) => t.points))
 if (contours.length === 0) {
-  console.error('輪郭を取得できませんでした')
+  // 線（stroke）だけで描かれた素材は扱えない。塗りの形が無いので円弧を
+  // 当てる対象が存在しない。黙って別の形を出すより、扱えないと言うほうがよい
+  console.error(
+    '塗りの形が取れませんでした。線だけで描かれた素材（fill="none" + stroke）は対象外です。',
+  )
   process.exit(1)
 }
 
@@ -25,14 +30,17 @@ const budget = Number(arcs)
 
 // 本数は大きさではなく曲がりの総量で配る。小さくても複雑な抜きが潰れないように
 const quota = allocateArcs(contours, budget)
-
 contours.forEach((points, i) => {
   const { segments } = traceArcs(points, { maxArcs: quota[i] })
   if (segments.length < 3) return
   const id = `c${i}`
   shapes.push({ kind: 'contour', id, segments })
-  steps.push({ op: i === 0 ? 'add' : 'sub', ref: id })
+  steps.push({ op: traced[i].solid ? 'add' : 'sub', ref: id })
 })
+
+// 塗りを全部合体させてから抜く。逐次に混ぜると、ある実体の穴が別の実体を
+// 削ってしまう
+steps.sort((a, b) => (a.op === b.op ? 0 : a.op === 'add' ? -1 : 1))
 
 const result = compile({
   name: out,
@@ -52,4 +60,7 @@ writeFileSync(`tmp/${out}-blueprint.svg`, result.blueprintSvg)
 writeFileSync(`tmp/${out}-poster.svg`, result.posterSvg)
 
 const total = shapes.reduce((n, s) => n + (s.kind === 'contour' ? s.segments.length : 0), 0)
-console.log(`${out}: 輪郭 ${shapes.length}（外形1 + 抜き${shapes.length - 1}）/ 円弧 計${total} 本 / インク ${(result.built.inkRatio * 100).toFixed(0)}%`)
+const solids = steps.filter((s) => s.op === 'add').length
+console.log(
+  `${out}: 実体 ${solids} + 抜き ${steps.length - solids} / 円弧 計${total} 本 / インク ${(result.built.inkRatio * 100).toFixed(0)}%`,
+)

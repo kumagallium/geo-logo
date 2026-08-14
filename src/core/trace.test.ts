@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { compile } from './index'
 import {
   allocateArcs,
+  collectShapes,
   contourComplexity,
   fitToModule,
+  paintOf,
   parseTransform,
   sampleContours,
   sampleContoursFromSvg,
@@ -145,7 +147,7 @@ describe('sampleContoursFromSvg', () => {
   it('transform を適用して座標を直す', () => {
     const svg =
       '<svg><g transform="translate(0,10) scale(1,-1)"><path d="M 0 0 L 4 0 L 4 4 Z"/></g></svg>'
-    const pts = sampleContoursFromSvg(svg, 60)[0]
+    const pts = sampleContoursFromSvg(svg, 60)[0].points
     // y 反転 + 移動なので、元の y=0..4 が y=10..6 になる
     expect(Math.max(...pts.map((p) => p.y))).toBeCloseTo(10, 1)
     expect(Math.min(...pts.map((p) => p.y))).toBeCloseTo(6, 1)
@@ -204,5 +206,60 @@ describe('allocateArcs', () => {
 
   it('輪郭が無ければ空', () => {
     expect(allocateArcs([], 20)).toEqual([])
+  })
+})
+
+describe('collectShapes', () => {
+  it('祖先の transform を解決する', () => {
+    // 要素ごとに別々の変換を持つ素材（Inkscape 製の家紋など）で、
+    // 無視すると図形が離れた場所へ散らばる
+    const svg =
+      '<svg><g transform="translate(10,0)"><g transform="scale(2)">' +
+      '<path d="M 0 0 L 1 0 L 1 1 Z"/></g></g></svg>'
+    const [shape] = collectShapes(svg)
+    expect(shape.matrix).toEqual([2, 0, 0, 2, 10, 0])
+  })
+
+  it('描画されない要素の中身は拾わない', () => {
+    // clipPath の中の図形を実体として拾うと、切り抜きの型が紋を塗り潰す
+    const svg =
+      '<svg><clipPath id="x"><path d="M 0 0 L 9 0 L 9 9 Z"/></clipPath>' +
+      '<defs><path d="M 0 0 L 5 0 L 5 5 Z"/></defs>' +
+      '<path d="M 0 0 L 1 0 L 1 1 Z"/></svg>'
+    expect(collectShapes(svg)).toHaveLength(1)
+  })
+
+  it('塗りを親から継承する', () => {
+    // <svg fill="none" stroke="#000"> で線だけ描いた紋を、塗り指定なし＝黒と
+    // 誤解すると真っ黒な円板になる
+    const svg = '<svg fill="none"><circle cx="5" cy="5" r="4"/></svg>'
+    expect(collectShapes(svg)).toHaveLength(0)
+  })
+})
+
+describe('paintOf', () => {
+  it('明るい色は塗り消しとして扱う', () => {
+    // 黒地に白抜きで紋を描いた反転素材がある
+    expect(paintOf('<path fill="#ffffff"/>')).toBe('erase')
+    expect(paintOf('<path fill="white"/>')).toBe('erase')
+    expect(paintOf('<path fill="#000000"/>')).toBe('ink')
+    expect(paintOf('<path fill="rgb(20,20,20)"/>')).toBe('ink')
+  })
+
+  it('塗り指定が無ければ黒（SVG の既定）', () => {
+    expect(paintOf('<path d="M0 0"/>')).toBe('ink')
+  })
+
+  it('none と透明は無視する', () => {
+    expect(paintOf('<path fill="none"/>')).toBe('skip')
+    expect(paintOf('<path fill="#000" fill-opacity="0"/>')).toBe('skip')
+    expect(paintOf('<path style="display:none" fill="#000"/>')).toBe('skip')
+  })
+
+  it('継承した塗りを使う', () => {
+    expect(paintOf('<circle r="4"/>', 'none')).toBe('skip')
+    expect(paintOf('<circle r="4"/>', '#fff')).toBe('erase')
+    // 自身の指定は継承より優先する
+    expect(paintOf('<circle r="4" fill="#000"/>', '#fff')).toBe('ink')
   })
 })

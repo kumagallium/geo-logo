@@ -37,11 +37,6 @@ function multiply(m: Matrix, n: Matrix): Matrix {
   ]
 }
 
-const applyMatrix = (m: Matrix, p: Vec): Vec => ({
-  x: m[0] * p.x + m[2] * p.y + m[4],
-  y: m[1] * p.x + m[3] * p.y + m[5],
-})
-
 /**
  * transform 属性を行列に直す。translate / scale / rotate / matrix に対応。
  *
@@ -78,22 +73,243 @@ export function parseTransform(value: string): Matrix {
   return m
 }
 
+const num = (s: string | undefined) => {
+  const v = Number.parseFloat(s ?? '')
+  return Number.isFinite(v) ? v : 0
+}
+
+const attr = (tag: string, name: string) =>
+  tag.match(new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`))?.[1]
+
+/** 輪郭 1 本。solid が false なら内側の抜き。 */
+export type TracedContour = { points: Vec[]; solid: boolean }
+
+/** 図形の役割。ink は塗り足し、erase は塗り消し。 */
+export type Paint = 'ink' | 'erase' | 'skip'
+
+export type SvgShape = { d: string; evenodd: boolean; matrix: Matrix; paint: Paint }
+
+const NAMED: Record<string, number> = {
+  black: 0,
+  white: 1,
+  none: -1,
+  transparent: -1,
+}
+
+/**
+ * 塗り色の明るさから役割を決める。
+ *
+ * 素材は白地に黒とは限らない。実測では、黒い矩形の上に白いパスで紋を
+ * 描いた反転素材があった（1 ファイルに白パス 179 本）。色を見ずに全部を
+ * 合体させると、背景の矩形に飲まれて真っ黒になる。
+ *
+ * SVG の既定の塗りは黒なので、fill が無ければ ink とみなす。
+ */
+export function paintOf(tag: string, inheritedFill = ''): Paint {
+  if (/display\s*:\s*none/.test(tag)) return 'skip'
+  const opacity = attr(tag, 'fill-opacity') ?? attr(tag, 'opacity')
+  if (opacity !== undefined && Number.parseFloat(opacity) === 0) return 'skip'
+
+  const raw = (
+    attr(tag, 'fill') ??
+    tag.match(/[^-]fill\s*:\s*([^;"']+)/)?.[1] ??
+    inheritedFill
+  )
+    .trim()
+    .toLowerCase()
+  if (raw === '') return 'ink' // SVG の既定は黒
+  if (raw in NAMED) return NAMED[raw] < 0 ? 'skip' : NAMED[raw] < 0.5 ? 'ink' : 'erase'
+
+  const hex = raw.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/)?.[1]
+  if (hex) {
+    const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex
+    const r = Number.parseInt(full.slice(0, 2), 16)
+    const g = Number.parseInt(full.slice(2, 4), 16)
+    const b = Number.parseInt(full.slice(4, 6), 16)
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5 ? 'ink' : 'erase'
+  }
+
+  const rgb = raw.match(/^rgba?\(([^)]+)\)/)?.[1]
+  if (rgb) {
+    const [r = 0, g = 0, b = 0] = rgb.split(/[\s,]+/).map(Number)
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.5 ? 'ink' : 'erase'
+  }
+
+  // url(#…) のグラデーションなど、判断できないものは塗りとして扱う
+  return 'ink'
+}
+
+/** タグ 1 つを表す基本図形をパスデータへ直す。対象外なら null。 */
+function tagToPathData(tag: string): string | null {
+  if (tag.startsWith('<path')) return attr(tag, 'd') ?? null
+
+  if (tag.startsWith('<circle') || tag.startsWith('<ellipse')) {
+    const cx = num(attr(tag, 'cx'))
+    const cy = num(attr(tag, 'cy'))
+    const rx = num(attr(tag, 'rx')) || num(attr(tag, 'r'))
+    const ry = num(attr(tag, 'ry')) || num(attr(tag, 'r'))
+    if (rx <= 0 || ry <= 0) return null
+    // 半円 2 本で 1 周する。1 本の弧では始点と終点が同じになり形が決まらない
+    return `M ${cx - rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx + rx} ${cy} A ${rx} ${ry} 0 1 0 ${cx - rx} ${cy} Z`
+  }
+
+  if (tag.startsWith('<rect')) {
+    const x = num(attr(tag, 'x'))
+    const y = num(attr(tag, 'y'))
+    const w = num(attr(tag, 'width'))
+    const h = num(attr(tag, 'height'))
+    if (w <= 0 || h <= 0) return null
+    return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`
+  }
+
+  const points = (attr(tag, 'points') ?? '')
+    .trim()
+    .split(/[\s,]+/)
+    .map(Number)
+    .filter((v) => Number.isFinite(v))
+  if (points.length < 6) return null
+  const parts = [`M ${points[0]} ${points[1]}`]
+  for (let i = 2; i + 1 < points.length; i += 2) parts.push(`L ${points[i]} ${points[i + 1]}`)
+  return `${parts.join(' ')} Z`
+}
+
+/**
+ * SVG から図形を、祖先の transform を解決した状態で取り出す。
+ *
+ * 「ファイル内の transform が 1 種類ならそれを全部に適用する」という手抜きは
+ * PhyloPic のような単純な素材でしか通じない。Inkscape 製の家紋は要素ごとに
+ * 別々の transform を持ち、無視すると図形が離れた場所へ散らばる（実測）。
+ *
+ * 完全な XML 解析はしない。タグの並びを見て `<g>` の開閉で行列のスタックを
+ * 積み下ろしするだけで、素材として現れる構造は覆える。
+ */
+export function collectShapes(svgText: string): SvgShape[] {
+  const out: SvgShape[] = []
+  // 変換だけでなく塗りも継承する。<svg fill="none" stroke="#000"> のように
+  // 親で塗りを消して線だけで描いた紋があり、要素の属性しか見ないと
+  // 「塗り指定なし＝黒」と誤解して真っ黒な円板になる（実測）。
+  const stack: Array<{ matrix: Matrix; fill: string }> = [{ matrix: IDENTITY, fill: '' }]
+
+  const SHAPES = /^<(path|circle|ellipse|rect|polygon|polyline)\b/
+  // 描画されない要素の中身は落とす。clipPath の中の図形まで拾うと、
+  // 切り抜きの型が実体として現れて紋が塗り潰される（実測）
+  const body = svgText
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(defs|clipPath|mask|marker|symbol|pattern)\b[\s\S]*?<\/\1>/g, '')
+
+  for (const [tag] of body.matchAll(/<\/?[A-Za-z][^>]*>/g)) {
+    const top = stack[stack.length - 1]
+
+    if (tag.startsWith('</')) {
+      if (/^<\/\s*(g|svg)\b/.test(tag) && stack.length > 1) stack.pop()
+      continue
+    }
+
+    const own = attr(tag, 'transform')
+    const matrix = own ? multiply(top.matrix, parseTransform(own)) : top.matrix
+    const fill = attr(tag, 'fill') ?? tag.match(/[^-]fill\s*:\s*([^;"']+)/)?.[1] ?? top.fill
+    const selfClosing = tag.endsWith('/>')
+
+    if (/^<(g|svg)\b/.test(tag)) {
+      if (!selfClosing) stack.push({ matrix, fill })
+      continue
+    }
+
+    if (!SHAPES.test(tag)) continue
+    const d = tagToPathData(tag)
+    if (!d) continue
+
+    const paint = paintOf(tag, top.fill)
+    if (paint === 'skip') continue
+    const rule = attr(tag, 'fill-rule') ?? tag.match(/fill-rule\s*:\s*([a-z]+)/)?.[1] ?? ''
+    out.push({ d, evenodd: rule.trim() === 'evenodd', matrix, paint })
+  }
+
+  return out
+}
+
 /**
  * SVG テキストから輪郭を取り出す。
  *
- * 入れ子の異なる transform には対応しない（素材としては稀で、対応させると
- * XML の完全な解析が要る）。ファイル内の transform が 1 種類のときだけ
- * 適用し、複数種あるときは無視して bbox 正規化に委ねる。
+ * 実体と穴は面積の符号（＝向き）で判定する。面積の大きい順ではなく、
+ * 実体を先に返す（最初の演算が抜きだと何も生まれない）。
  */
-export function sampleContoursFromSvg(svgText: string, count = 720): Vec[][] {
-  const paths = [...svgText.matchAll(/\sd="([^"]+)"/g)].map((m) => m[1])
-  if (paths.length === 0) return []
+export function sampleContoursFromSvg(svgText: string, count = 720): TracedContour[] {
+  const all = collectShapes(svgText)
+  if (all.length === 0) return []
 
-  const transforms = [...new Set([...svgText.matchAll(/\stransform="([^"]+)"/g)].map((m) => m[1]))]
-  const m = transforms.length === 1 ? parseTransform(transforms[0]) : IDENTITY
+  const p = getPaper()
+  resetProject()
+  try {
+    // 要素ごとに複合パスを作り、すべて合体させる。
+    //
+    // 全部の d を 1 つの複合パスにまとめて「最大が実体、残りは穴」とみなす
+    // 単純化は、動物のシルエットでは通じるが家紋では破綻する。家紋は独立した
+    // 図形が複数並び、しかも互いに重なる。包含関係を数えても、重なった領域が
+    // 二重に数えられて実体と穴が入れ替わる（実測）。
+    //
+    // ブーリアンを paper に任せれば、結果の複合パスでは外周と穴が逆向きに
+    // 揃う。向きで判定するのが最も確実。
+    // 塗り順どおりに積み上げる。後に描かれたものが前を覆うという SVG の
+    // 意味をそのまま辿れば、白地に黒でも黒地に白抜きでも同じ手順で扱える。
+    let united: paper.PathItem | null = null
+    for (const el of all) {
+      const item = new p.CompoundPath(el.d)
+      item.fillRule = el.evenodd ? 'evenodd' : 'nonzero'
+      // 祖先から受け継いだ変換は、合体させる前に反映する。後で点へ掛けると
+      // 図形どうしの位置関係が合わないまま union することになる
+      if (el.matrix !== IDENTITY) item.transform(new p.Matrix(...el.matrix))
 
-  const contours = sampleContours(paths.join(' '), count)
-  return m === IDENTITY ? contours : contours.map((pts) => pts.map((p) => applyMatrix(m, p)))
+      if (!united) {
+        // まだ何も無いところから消しても何も起きない（先頭の白い背景など）
+        if (el.paint === 'erase') {
+          item.remove()
+          continue
+        }
+        united = item
+        continue
+      }
+      const next: paper.PathItem = el.paint === 'ink' ? united.unite(item) : united.subtract(item)
+      united.remove()
+      item.remove()
+      united = next
+    }
+    if (!united) return []
+
+    const children = (united.children?.length ? united.children : [united]) as paper.Path[]
+    const measured = children
+      .map((path) => ({
+        path,
+        area: (path as unknown as { area?: number }).area ?? 0,
+      }))
+      .filter((c) => c.path.length > 0 && c.area !== 0)
+    if (measured.length === 0) return []
+
+    // 最も面積の大きい輪郭は必ず実体。その向きを「実体の向き」とみなす
+    const biggest = measured.reduce((a, b) => (Math.abs(b.area) > Math.abs(a.area) ? b : a))
+    const solidSign = Math.sign(biggest.area)
+    // 面積のしきい値は控えめに。0.4% では蛇の目の中心の点や細い縞が落ちて、
+    // 紋が別物になった（実測）。素材のゴミを弾くだけの値にする
+    const floor = Math.abs(biggest.area) * 0.0004
+    const longest = biggest.path.length || 1
+
+    const out: TracedContour[] = []
+    for (const { path, area } of measured) {
+      if (Math.abs(area) < floor) continue
+      const n = Math.max(48, Math.round(count * Math.min(1, path.length / longest)))
+      const points: Vec[] = []
+      for (let i = 0; i < n; i++) {
+        const pt = path.getPointAt((path.length * i) / n)
+        if (pt) points.push({ x: pt.x, y: pt.y })
+      }
+      if (points.length >= 8) out.push({ points, solid: Math.sign(area) === solidSign })
+    }
+
+    // 実体を先に、面積の大きい順に。最初の演算が抜きだと何も生まれない
+    return out.sort((a, b) => Number(b.solid) - Number(a.solid))
+  } finally {
+    resetProject()
+  }
 }
 
 /** 円弧 1 本が張れる最大角。180 度を超えると始点と終点だけでは形が決まらない。 */
@@ -217,8 +433,11 @@ function angleDelta(from: number, to: number): number {
  * 確定して次へ進む。許容量を上げるほど本数が減るので、目標本数に収まるまで
  * 許容量を二分探索する。「何本で描くか」を先に決める作り。
  */
-function fitPass(points: Vec[], tol: number): ContourSegment[] {
+function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
   const n = points.length
+  // 半径がこれを超えたら直線として扱う。家紋や紋章には直線の辺が多く、
+  // 巨大な半径の円弧で近似すると、わずかに膨らんで菱形が団子になる（実測）。
+  const straight = scale * 12
   const segments: ContourSegment[] = []
   let start = 0
   let guard = 0
@@ -231,7 +450,7 @@ function fitPass(points: Vec[], tol: number): ContourSegment[] {
       const window = points.slice(start, end + 1)
       const c = fitCircle(window)
 
-      if (c) {
+      if (c && c.r <= straight) {
         if (maxDeviation(window, c) > tol) break
         const a0 = Math.atan2(window[0].y - c.cy, window[0].x - c.cx)
         const a1 = Math.atan2(
@@ -247,7 +466,7 @@ function fitPass(points: Vec[], tol: number): ContourSegment[] {
     const stop = accepted?.end ?? Math.min(start + 3, n)
     const from = points[start]
     const to = points[Math.min(stop, n - 1)]
-    const c = accepted?.c ?? null
+    const c = accepted?.c && accepted.c.r <= straight ? accepted.c : null
 
     if (c) {
       // 膨らむ向きは、当てた円の中心から見た角度が増える向きかどうかで決まる。
@@ -297,14 +516,19 @@ export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResul
   const maxArcs = Math.max(3, Math.min(options.maxArcs ?? 12, 64))
   if (points.length < 8) return { segments: [], tolerance: 0 }
 
+  // 直線判定の基準になる輪郭の大きさ
+  const xs = points.map((q) => q.x)
+  const ys = points.map((q) => q.y)
+  const scale = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 0.05)
+
   // 許容誤差を二分探索する。大きくすると本数が減る単調な関係なので収束する。
   let lo = 0.002
   let hi = 1.5
-  let best = fitPass(points, hi)
+  let best = fitPass(points, hi, scale)
 
   for (let i = 0; i < 24; i++) {
     const mid = (lo + hi) / 2
-    const segments = fitPass(points, mid)
+    const segments = fitPass(points, mid, scale)
     if (segments.length > maxArcs) {
       lo = mid
     } else {
