@@ -6,6 +6,7 @@
 // UI はこのモジュールだけを見る。Graphium の設定画面が
 // 「Tauri/Node ならサーバー、Web なら localStorage」を分岐していたのと同じ役割。
 
+import { apiUrl } from '../../lib/api-base'
 import { aiErrorFromResponse } from '../../lib/ai-error'
 import type { ModelConfig, TokenRate } from '../../lib/model-config'
 import { fetchAvailableModels } from '../../lib/provider-models'
@@ -51,7 +52,7 @@ export type ModelInputFromSource = Omit<ModelInput, 'apiKey' | 'apiBase'> & {
   apiBase?: string | null
 }
 
-const api = (path: string) => `${import.meta.env.BASE_URL}api${path}`
+const api = (path: string) => apiUrl(`api${path}`)
 
 export async function currentMode(): Promise<RuntimeMode> {
   return detectRuntimeMode()

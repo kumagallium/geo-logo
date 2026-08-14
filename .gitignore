@@ -9,3 +9,12 @@ tmp/
 
 # tsc のインクリメンタルビルド情報（生成物）
 *.tsbuildinfo
+
+# --- Tauri ---
+# ビルド生成物
+src-tauri/target/
+src-tauri/gen/
+# 同梱する Node ランタイム（121MB）とバンドル済みサーバー。
+# scripts/fetch-node.mjs と scripts/bundle-server.mjs が生成する。
+src-tauri/sidecar/
+src-tauri/binaries/

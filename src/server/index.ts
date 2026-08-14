@@ -13,6 +13,37 @@ import { originGuard, securityHeaders } from './security.js'
 
 const port = Number(process.env.GEOLOGO_PORT ?? 8787)
 
+/** デスクトップ版のアプリ本体が渡すバージョン。単体起動なら dev。 */
+const appVersion = process.env.GEOLOGO_APP_VERSION ?? 'dev'
+
+/**
+ * 親プロセスを監視し、消えたら自決する。
+ *
+ * Tauri のサイドカーとして起動したとき、アプリ本体が終了してもこのプロセスが
+ * 残るとポートを握り続ける。次の起動で新しいアプリが古いサーバーを再利用して
+ * しまい、後から追加した API が 404 になる（Graphium が実際に踏んだ事故）。
+ *
+ * signal 0 は存在確認だけでシグナルを送らない。macOS / Linux / Windows の
+ * いずれでも Node が対応している。
+ */
+function startParentWatchdog(): void {
+  const parentPid = Number(process.env.GEOLOGO_PARENT_PID)
+  if (!Number.isInteger(parentPid) || parentPid <= 0) return
+
+  const timer = setInterval(() => {
+    try {
+      process.kill(parentPid, 0)
+    } catch {
+      console.error(`[sidecar] 親プロセス ${parentPid} が消えました。終了します`)
+      process.exit(0)
+    }
+  }, 2000)
+  // watchdog 単独ではイベントループを延命させない
+  timer.unref()
+}
+
+startParentWatchdog()
+
 const app = new Hono()
 
 // CORS は張らない。ブラウザからは Vite の proxy 経由で同一オリジンとして届くため
@@ -26,6 +57,11 @@ app.get('/api/health', (c) =>
     ok: true,
     mode: 'server',
     registeredModels: listModels().length,
+    // pid と version はデスクトップ版の整合性検査に使う。自動更新の直後、
+    // 古いサイドカーが生き残っていると版が食い違うので、フロントが検知して
+    // kill → 再起動する。
+    pid: process.pid,
+    version: appVersion,
   }),
 )
 

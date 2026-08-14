@@ -13,7 +13,11 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke-design.ts",
-    "smoke:candidates": "tsx scripts/smoke-candidates.ts"
+    "smoke:candidates": "tsx scripts/smoke-candidates.ts",
+    "dev:web": "vite",
+    "tauri": "tauri",
+    "sidecar:node": "node scripts/fetch-node.mjs",
+    "sidecar:bundle": "node scripts/bundle-server.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.110",
@@ -21,6 +25,7 @@
     "@ai-sdk/openai": "^3.0.96",
     "@ai-sdk/openai-compatible": "^2.0.67",
     "@hono/node-server": "^1.13.7",
+    "@tauri-apps/api": "^2",
     "ai": "^6.0.253",
     "hono": "^4.13.2",
     "paper": "^0.12.18",
@@ -29,12 +34,14 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
     "dotenv": "^16.4.7",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",

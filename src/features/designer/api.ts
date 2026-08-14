@@ -1,5 +1,6 @@
 import type { LogoDesign } from '../../core/index'
 import { aiErrorFromResponse } from '../../lib/ai-error'
+import { apiUrl } from '../../lib/api-base'
 import { CodedError } from '../../lib/ai-error-codes'
 import { createModel } from '../../lib/create-model'
 import { designLogo, modeForVariant } from '../../lib/design-agent'
@@ -71,7 +72,7 @@ export async function requestDesign(
     }
   }
 
-  const res = await fetch(`${import.meta.env.BASE_URL}api/design`, {
+  const res = await fetch(apiUrl('api/design'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ brief, model: undefined, variantIndex }),

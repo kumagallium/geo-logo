@@ -11,6 +11,8 @@
 //            直接叩く。Graphium の "vercel" モード（クライアント保持 + ヘッダー送信）
 //            の考え方をそのまま、送信先だけサーバーからプロバイダーへ変えたもの。
 
+import { apiUrl } from './api-base'
+
 export type RuntimeMode = 'server' | 'static'
 
 let cached: RuntimeMode | null = null
@@ -26,7 +28,7 @@ export async function detectRuntimeMode(): Promise<RuntimeMode> {
 
   probe = (async (): Promise<RuntimeMode> => {
     try {
-      const res = await fetch(`${import.meta.env.BASE_URL}api/health`, {
+      const res = await fetch(apiUrl('api/health'), {
         headers: { accept: 'application/json' },
       })
       if (!res.ok) return 'static'
