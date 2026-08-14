@@ -10,29 +10,11 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { buildFromArchetype } from '../src/core/archetypes.js'
-import { buildFromComposition } from '../src/core/composition.js'
-import { buildFromEmblem } from '../src/core/emblem.js'
-import { buildFromFigure } from '../src/core/figure.js'
-import { compile, type LogoDesign } from '../src/core/index.js'
+import { compile } from '../src/core/index.js'
 import { formatMetrics, measure } from '../src/core/metrics.js'
-import { buildFromOutline } from '../src/core/outline.js'
 import { encodeGrayPng, rasterizeGray } from '../src/core/raster.js'
 import { diagnose } from '../src/lib/design-agent.js'
-
-export function toDesign(plan: Record<string, unknown>): LogoDesign {
-  if (Array.isArray(plan.pieces)) return buildFromComposition(plan as never)
-  if (Array.isArray(plan.contours)) return buildFromOutline(plan as never)
-  if (Array.isArray(plan.nodes)) {
-    // 節点方式は輪の並び（rings）を持つ。関係方式は持たない
-    const first = plan.nodes[0] as Record<string, unknown> | undefined
-    return first && Array.isArray(first.rings)
-      ? buildFromEmblem(plan as never)
-      : buildFromFigure(plan as never)
-  }
-  if (typeof plan.archetype === 'string') return buildFromArchetype(plan as never)
-  return plan as unknown as LogoDesign
-}
+import { toDesign } from './plan.js'
 
 const [out = 'tmp/sheet.png', ...files] = process.argv.slice(2)
 if (files.length === 0) {
