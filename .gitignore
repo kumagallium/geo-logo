@@ -6,3 +6,6 @@ data/
 *.log
 .DS_Store
 tmp/
+
+# tsc のインクリメンタルビルド情報（生成物）
+*.tsbuildinfo
