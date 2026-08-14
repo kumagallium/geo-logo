@@ -60,6 +60,27 @@ export function tangentHull(a: PackedCircle, b: PackedCircle): string | null {
 }
 
 /**
+ * 骨格の木から、根にぶら下がる枝ごとの集合を返す。
+ *
+ * 胴に付く腕・脚・頭が、それぞれ 1 つの枝になる。白い隙間はこの単位で
+ * 彫るので、枝の切り分けがそのままカウンターの単位になる。
+ */
+export function limbs(circles: PackedCircle[], edges: Array<[number, number]>): number[][] {
+  if (circles.length === 0) return []
+  const root = circles.reduce((best, c, i) => (c.r > circles[best].r ? i : best), 0)
+
+  const children = new Map<number, number[]>()
+  for (const [child, parent] of edges) {
+    const list = children.get(parent) ?? []
+    list.push(child)
+    children.set(parent, list)
+  }
+
+  const collect = (i: number): number[] => [i, ...(children.get(i) ?? []).flatMap(collect)]
+  return (children.get(root) ?? []).map(collect)
+}
+
+/**
  * 円を骨格として繋ぐ。
  *
  * それぞれの円を「自分より大きく、最も近い円」へ繋ぐと、最大の塊を根とする

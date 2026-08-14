@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { buildFromComposition } from '../src/core/composition.js'
 import { compile } from '../src/core/index.js'
-import { packCircles, skeleton, tangentHull } from '../src/core/pack.js'
+import { limbs, packCircles, skeleton, tangentHull } from '../src/core/pack.js'
 import {
   allocateArcs,
   fitToModule,
@@ -77,25 +77,100 @@ const p = getPaper()
 resetProject()
 
 const placed = pieces.map((q) => ({ x: q.x, y: q.y, r: q.size }))
-let body: paper.PathItem | null = null
-const addPart = (item: paper.PathItem) => {
-  if (!body) {
-    body = item
-    return
+const edges = skeleton(placed)
+
+/** 円の集合を、外接接線で包んだひとつの形にする */
+const hullOf = (index: number[], grow = 0): paper.PathItem | null => {
+  let shape: paper.PathItem | null = null
+  const add = (item: paper.PathItem) => {
+    if (!shape) {
+      shape = item
+      return
+    }
+    const next: paper.PathItem = shape.unite(item)
+    shape.remove()
+    item.remove()
+    shape = next
   }
-  const next: paper.PathItem = body.unite(item)
-  body.remove()
-  item.remove()
-  body = next
+  const set = new Set(index)
+  for (const i of index) {
+    const c = placed[i]
+    add(new p.Path.Circle(new p.Point(c.x, c.y), c.r + grow))
+  }
+  for (const [i, j] of edges) {
+    if (!set.has(i) || !set.has(j)) continue
+    const d = tangentHull(
+      { ...placed[i], r: placed[i].r + grow },
+      { ...placed[j], r: placed[j].r + grow },
+    )
+    if (d) add(new p.CompoundPath(d))
+  }
+  return shape
 }
-for (const c of placed) addPart(new p.Path.Circle(new p.Point(c.x, c.y), c.r))
-for (const [i, j] of skeleton(placed)) {
-  const d = tangentHull(placed[i], placed[j])
-  if (d) addPart(new p.CompoundPath(d))
-}
+
+let body = hullOf(placed.map((_, i) => i))
 if (!body) {
   console.error('形を組み立てられませんでした')
   process.exit(1)
+}
+
+// --- 白の設計（カウンター）---
+//
+// 参照のマークは、腕と胴・腿と胴を白い隙間が彫り分けている。塗り残しでは
+// なく、輪郭と同じ精度で設計された形。タイポグラフィでいうカウンターにあたる。
+//
+// 枝を一定量だけ太らせた形から元の形を引くと、枝を縁取る一定幅の帯になる。
+// それをマークから引けば、枝が胴へ入るところに隙間が生まれる。枝は先へ
+// いくほど細いので、帯も自然に細くなり、両端が尖る。
+// 既定は 0（彫らない）。骨格から推定した付け根の位置が実際の関節と一致せず、
+// 胴の真ん中を削ってしまう。概念は正しいが、付け根を当てる手段がまだ無い
+const channelWidth = base * Number(process.env.GEOLOGO_CHANNEL ?? '0')
+let channels = 0
+const parentOf = new Map(edges.map(([child, parent]) => [child, parent]))
+
+if (channelWidth > 0) {
+  for (const limb of limbs(placed, edges)) {
+    const head = limb[0]
+    // 胴に対して小さすぎる枝は彫らない（線が潰れて汚れになる）
+    if (placed[head].r < base * 0.25) continue
+    const parent = parentOf.get(head)
+    if (parent === undefined) continue
+
+    const inner = hullOf(limb)
+    const outer = hullOf(limb, channelWidth)
+    if (!inner || !outer) continue
+
+    // 帯を一周させると枝が胴から切り離される。参照の隙間は付け根まわりだけの
+    // 三日月で、一周していない。親の円の近傍に限って彫る
+    const near = new p.Path.Circle(
+      new p.Point(placed[parent].x, placed[parent].y),
+      placed[parent].r * 1.15,
+    )
+    const ring = outer.subtract(inner)
+    const crescent = ring.intersect(near)
+    const next: paper.PathItem = (body as paper.PathItem).subtract(crescent)
+    ;(body as paper.PathItem).remove()
+    for (const x of [inner, outer, ring, near, crescent]) x.remove()
+    body = next
+    channels++
+  }
+}
+
+// --- 接地 ---
+//
+// 参照の足は地面に平らに接して重心が下にある。丸い脚が宙に浮いていると
+// 重さが出ない。下端を水平に切って地面に載せる。
+if (process.env.GEOLOGO_GROUND !== '0') {
+  const b = (body as paper.PathItem).bounds
+  const cut = b.height * 0.035
+  const blade = new p.Path.Rectangle(
+    new p.Point(b.x - b.width, b.y + b.height - cut),
+    new p.Size(b.width * 3, b.height),
+  )
+  const next: paper.PathItem = (body as paper.PathItem).subtract(blade)
+  ;(body as paper.PathItem).remove()
+  blade.remove()
+  body = next
 }
 const outline = new p.CompoundPath((body as paper.PathItem).pathData)
 ;(body as paper.PathItem).remove()
@@ -159,6 +234,6 @@ writeFileSync(`tmp/${out}-poster.svg`, result.posterSvg)
 const arcs = shapes.reduce((n, x) => n + (x.kind === 'contour' ? x.segments.length : 0), 0)
 console.log(
   `${out}: 円 ${circles.length} → 輪郭 ${shapes.length} / 円弧 ${arcs} 本 / ` +
-    `異なる半径 ${tuned.radii.length} 種 / 対称 ${symmetric ? 'あり' : 'なし'} / ` +
+    `異なる半径 ${tuned.radii.length} 種 / 白の隙間 ${channels} 本 / ` +
     `インク ${(result.built.inkRatio * 100).toFixed(0)}%`,
 )
