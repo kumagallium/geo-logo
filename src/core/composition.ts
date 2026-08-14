@@ -479,6 +479,43 @@ export type CompositionPlan = Composition & { palette?: LogoDesign['palette'] }
  * ブーリアン演算の順序・id・参照・制約は一切書かせない（自由 DSL 生成が
  * 壊れた原因はほぼこの 4 つだった）。
  */
+/**
+ * 部品の寸法を比例の梯子に載せる。
+ *
+ * 家紋を実測すると、寸法の種類は 3〜5 に収まる。一方、輪郭をなぞって
+ * 起こした形は 10〜14 種になる。この差が「作図されたもの」と「描かれた
+ * もの」を分ける。モデルが出す寸法は連続値なので、そのままでは後者になる。
+ */
+export function snapToLadder(pieces: Piece[], ratio: Composition['ratio']): Piece[] {
+  const step = ratio === 'golden' ? PHI : ratio === 'silver' ? Math.SQRT2 : 1.5
+  const top = Math.max(...pieces.map((p) => p.size))
+  if (!(top > 0)) return pieces
+  return pieces.map((p) => {
+    // 縮める方向へは寄せない。縮めると隣との重なりが外れ、位置の修復が
+    // 追いつかずに部品が浮く（実測で落ちた）。太らせる分には重なりは残る
+    const k = Math.floor(Math.log(top / p.size) / Math.log(step))
+    return { ...p, size: round(top / step ** Math.min(Math.max(k, 0), 5)) }
+  })
+}
+
+/**
+ * 主役をひとつ作る。
+ *
+ * 同じくらいの塊が並ぶと、目がどこを見ればよいか決められず団子に見える。
+ * 実際、円を詰めて形を作る経路では質量が平均化され、ゴリラの肩の張りが
+ * 消えた。最大の部品が二番手と同じ段にいるなら、一段上げて主従を付ける。
+ */
+export function enforceHierarchy(pieces: Piece[], ratio: Composition['ratio']): Piece[] {
+  const adds = pieces.filter((p) => p.role === 'add')
+  if (adds.length < 2) return pieces
+  const step = ratio === 'golden' ? PHI : ratio === 'silver' ? Math.SQRT2 : 1.5
+  const sorted = [...adds].sort((a, b) => b.size - a.size)
+  const [first, second] = sorted
+  if (first.size >= second.size * step * 0.95) return pieces
+  const grown = round(Math.min(second.size * step, 5))
+  return pieces.map((p) => (p === first ? { ...p, size: grown } : p))
+}
+
 export function buildFromComposition(plan: CompositionPlan): LogoDesign {
   const parsed = compositionSchema.parse(plan)
 
@@ -490,8 +527,12 @@ export function buildFromComposition(plan: CompositionPlan): LogoDesign {
     biggest.role = 'add'
   }
 
+  // 寸法を整えてから位置を直す。順序が逆だと、寄せた部品を寸法変更で
+  // 引き剥がしてしまう。
+  const systematic = enforceHierarchy(snapToLadder(expanded, parsed.ratio), parsed.ratio)
+
   // 内へ寄せてから外へ出す。順序が逆だと、押し出した部品を寄せ戻してしまう。
-  const pulled = repairConnectivity(expanded, parsed.ratio).pieces
+  const pulled = repairConnectivity(systematic, parsed.ratio).pieces
   const { pieces } = repairVisibility(pulled, parsed.ratio)
 
   // 線幅の下限は全体の寸法から決める。小さな部品の線幅をそのまま使うと、
