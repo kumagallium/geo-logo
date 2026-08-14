@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { packCircles } from './pack'
+import { packCircles, skeleton, tangentHull } from './pack'
 import type { Vec } from './trace'
 
 const circle = (cx: number, cy: number, r: number, n = 180): Vec[] =>
@@ -64,5 +64,52 @@ describe('packCircles', () => {
 
   it('空なら空', () => {
     expect(packCircles([], { count: 4 })).toEqual([])
+  })
+})
+
+describe('tangentHull', () => {
+  /**
+   * 円板を union すると、大きさの違う 2 円は 2 つのコブになる。外接接線で
+   * 結ぶと円錐台になり、付け根から末端へ細くなる形が生まれる。
+   * 太さが一定の管はどうしても風船に見える。
+   */
+  it('大きさの違う 2 円を胴で結ぶ', () => {
+    const d = tangentHull({ x: 0, y: 0, r: 2 }, { x: 5, y: 0, r: 1 })
+    expect(d).not.toBeNull()
+    // 四辺形なので座標が 4 組
+    expect((d as string).match(/[ML]/g)).toHaveLength(4)
+  })
+
+  it('片方がもう片方を含むなら胴は要らない', () => {
+    expect(tangentHull({ x: 0, y: 0, r: 3 }, { x: 0.5, y: 0, r: 1 })).toBeNull()
+  })
+
+  it('接点は円周上にある', () => {
+    const a = { x: 0, y: 0, r: 2 }
+    const b = { x: 6, y: 0, r: 1 }
+    const nums = (tangentHull(a, b) as string).match(/-?\d+\.?\d*/g)?.map(Number) ?? []
+    const pts = [0, 2, 4, 6].map((i) => ({ x: nums[i], y: nums[i + 1] }))
+    // 最初と最後が a の周上、中の 2 つが b の周上
+    expect(Math.hypot(pts[0].x - a.x, pts[0].y - a.y)).toBeCloseTo(a.r, 2)
+    expect(Math.hypot(pts[1].x - b.x, pts[1].y - b.y)).toBeCloseTo(b.r, 2)
+  })
+})
+
+describe('skeleton', () => {
+  it('最大の円を根として木を作る', () => {
+    const circles = [
+      { x: 0, y: 0, r: 3 },
+      { x: 4, y: 0, r: 1 },
+      { x: 6, y: 0, r: 0.5 },
+    ]
+    const edges = skeleton(circles)
+    // 円の数 - 1 本
+    expect(edges).toHaveLength(2)
+    // いちばん小さい円は、自分より大きく最も近い円に付く
+    expect(edges.some(([i, j]) => i === 2 && j === 1)).toBe(true)
+  })
+
+  it('円が 1 つなら辺は無い', () => {
+    expect(skeleton([{ x: 0, y: 0, r: 1 }])).toEqual([])
   })
 })

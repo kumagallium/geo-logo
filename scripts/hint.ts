@@ -9,7 +9,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { buildFromComposition } from '../src/core/composition.js'
 import { compile } from '../src/core/index.js'
-import { packCircles } from '../src/core/pack.js'
+import { packCircles, skeleton, tangentHull } from '../src/core/pack.js'
 import {
   allocateArcs,
   fitToModule,
@@ -71,14 +71,36 @@ const design = buildFromComposition({
   pieces,
 } as never)
 
-// 円板を合体させただけの輪郭は、丸い凹凸の連なりになる。円は構造を決める
-// ためのもので、輪郭はそこから改めて円弧で描く。家紋の逆算で分かったこと。
-const rough = compile(design)
+// 円板を union すると、大きさの違う 2 円は 2 つのコブになる。外接接線で
+// 結ぶと円錐台になり、付け根から末端へ細くなる。太さが一定の管は風船に見える。
 const p = getPaper()
 resetProject()
-const outline = new p.CompoundPath(rough.built.parts.map((x) => x.pathData).join(' '))
+
+const placed = pieces.map((q) => ({ x: q.x, y: q.y, r: q.size }))
+let body: paper.PathItem | null = null
+const addPart = (item: paper.PathItem) => {
+  if (!body) {
+    body = item
+    return
+  }
+  const next: paper.PathItem = body.unite(item)
+  body.remove()
+  item.remove()
+  body = next
+}
+for (const c of placed) addPart(new p.Path.Circle(new p.Point(c.x, c.y), c.r))
+for (const [i, j] of skeleton(placed)) {
+  const d = tangentHull(placed[i], placed[j])
+  if (d) addPart(new p.CompoundPath(d))
+}
+if (!body) {
+  console.error('形を組み立てられませんでした')
+  process.exit(1)
+}
+const outline = new p.CompoundPath((body as paper.PathItem).pathData)
+;(body as paper.PathItem).remove()
 const kids = (outline.children?.length ? outline.children : [outline]) as paper.Path[]
-const M = rough.design.module
+const M = design.module
 
 const smoothed: Array<{ points: { x: number; y: number }[]; solid: boolean }> = []
 const biggest = kids.reduce((a, b) =>
@@ -92,7 +114,7 @@ for (const path of kids) {
   const pts: { x: number; y: number }[] = []
   for (let i = 0; i < count; i++) {
     const pt = path.getPointAt((path.length * i) / count)
-    if (pt) pts.push({ x: pt.x / M, y: pt.y / M })
+    if (pt) pts.push({ x: pt.x, y: pt.y })
   }
   if (pts.length >= 8) smoothed.push({ points: pts, solid: Math.sign(area) === solidSign })
 }

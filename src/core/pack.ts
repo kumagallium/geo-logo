@@ -19,6 +19,74 @@ import { getPaper, resetProject } from './paper-setup'
 
 export type PackedCircle = { x: number; y: number; r: number }
 
+/**
+ * 円の連なりを外接接線で包む。
+ *
+ * 円板を union すると、大きさの違う 2 円は 2 つのコブになる。外接接線で
+ * 結ぶと円錐台になり、付け根から末端へ細くなる形が生まれる。骨格から
+ * 肉付けする作図の基本で、太さが一定の管はどうしても風船に見える。
+ *
+ * 返すのは「胴（2 円をつなぐ四辺形）」のパスデータ。円そのものは呼び出し側で
+ * 合わせて union する。
+ */
+export function tangentHull(a: PackedCircle, b: PackedCircle): string | null {
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const d = Math.hypot(dx, dy)
+  // 片方がもう片方を含むなら、胴は要らない（大きいほうで足りる）
+  if (d < 1e-9 || Math.abs(a.r - b.r) >= d) return null
+
+  const ux = dx / d
+  const uy = dy / d
+  // 外接接線の接点は、中心線から ±θ の向きにある
+  const cos = (a.r - b.r) / d
+  const theta = Math.acos(Math.max(-1, Math.min(1, cos)))
+
+  const at = (c: PackedCircle, sign: number) => {
+    const s = Math.sin(theta) * sign
+    const co = Math.cos(theta)
+    // 中心線を ±θ 回した向き
+    const vx = ux * co - uy * s
+    const vy = ux * s + uy * co
+    return { x: c.x + c.r * vx, y: c.y + c.r * vy }
+  }
+
+  const p0 = at(a, 1)
+  const p1 = at(b, 1)
+  const q1 = at(b, -1)
+  const q0 = at(a, -1)
+  const f = (v: number) => Math.round(v * 1000) / 1000
+  return `M ${f(p0.x)} ${f(p0.y)} L ${f(p1.x)} ${f(p1.y)} L ${f(q1.x)} ${f(q1.y)} L ${f(q0.x)} ${f(q0.y)} Z`
+}
+
+/**
+ * 円を骨格として繋ぐ。
+ *
+ * それぞれの円を「自分より大きく、最も近い円」へ繋ぐと、最大の塊を根とする
+ * 木ができる。胴に四肢が付く、という自然な構造になる。
+ */
+export function skeleton(circles: PackedCircle[]): Array<[number, number]> {
+  const order = circles.map((_, i) => i).sort((a, b) => circles[b].r - circles[a].r)
+  const edges: Array<[number, number]> = []
+
+  for (let k = 1; k < order.length; k++) {
+    const i = order[k]
+    let best = -1
+    let bestD = Number.POSITIVE_INFINITY
+    // 自分より先に並んでいる（＝大きい）円のうち、最も近いもの
+    for (let j = 0; j < k; j++) {
+      const m = order[j]
+      const d = Math.hypot(circles[i].x - circles[m].x, circles[i].y - circles[m].y)
+      if (d < bestD) {
+        bestD = d
+        best = m
+      }
+    }
+    if (best >= 0) edges.push([i, best])
+  }
+  return edges
+}
+
 export type PackOptions = {
   /** 取り出す円の数 */
   count?: number
