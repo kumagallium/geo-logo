@@ -875,3 +875,198 @@ body {
   color: var(--ink-soft);
   flex-wrap: wrap;
 }
+
+/* ---- 三分割の殻: 左に履歴、中央に設計、右に対話 ---- */
+.shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 340px;
+  height: 100%;
+  min-height: 0;
+}
+
+.history {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.history__new {
+  width: 100%;
+}
+.history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.history__item {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  display: block;
+}
+.history__item:hover {
+  background: #f2f6f9;
+}
+.history__item--on {
+  background: #eaf1f8;
+  font-weight: 600;
+}
+.history__item em {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.canvas {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.canvas__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.canvas__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.canvas__shaping {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: #fbfdff;
+  font-size: 12px;
+}
+.canvas__shaping label span {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.canvas__shaping label em {
+  font-style: normal;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+.canvas__shaping input[type='range'] {
+  width: 180px;
+}
+.canvas__toggle {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.canvas__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  min-height: 0;
+}
+
+/* ---- 対話 ---- */
+.chat {
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.chat__log {
+  flex: 1;
+  overflow: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat__hint {
+  color: var(--ink-soft);
+  font-size: 12px;
+  margin: 0;
+}
+.chat__msg {
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 13px;
+}
+.chat__msg p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.chat__msg--user {
+  background: #eaf1f8;
+}
+.chat__msg--assistant {
+  background: #f4f7fa;
+}
+.chat__ref {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.chat__msg .btn--ghost {
+  margin-top: 6px;
+}
+.chat__compose {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat__attached {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #eef4f9;
+  border-radius: 8px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.chat__attached button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.chat__compose textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+.chat__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
