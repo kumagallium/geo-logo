@@ -494,7 +494,55 @@ function makePrimitive(p: PaperCore, s: Shape): paper.PathItem | null {
       path.closed = true
       return path
     }
+
+    case 'contour': {
+      // SVG のパスデータを組み立てて paper に読ませる。円弧は A コマンドで
+      // 表すのが最も素直で、paper 側の arcTo（通過点指定）より誤差が出ない。
+      const [first, ...rest] = s.segments
+      const d = [`M ${first.x} ${first.y}`]
+      for (const seg of rest) {
+        d.push(arcCommand(seg))
+      }
+      d.push(arcCommand(first), 'Z')
+      return new p.Path(d.join(' '))
+    }
   }
+}
+
+/**
+ * 円弧の端点・半径・回り方から、元の円の中心を求める。
+ *
+ * SVG の弧は端点指定なので中心を持たない。設計図に作図円を描くには
+ * 逆算が要る。large-arc は常に 0 なので、解は 2 つのうち sweep で決まる方。
+ */
+function arcCenter(
+  from: { x: number; y: number },
+  seg: { x: number; y: number; r?: number; sweep: boolean },
+): { x: number; y: number; r: number } | null {
+  if (seg.r === undefined) return null
+  const dx = seg.x - from.x
+  const dy = seg.y - from.y
+  const d = Math.hypot(dx, dy)
+  if (d < 1e-9) return null
+
+  // 半径が弦の半分に満たないときは弧が張れない。SVG と同じく半径を広げる
+  const r = Math.max(seg.r, d / 2)
+  const h = Math.sqrt(Math.max(r * r - (d / 2) ** 2, 0))
+  const mx = (from.x + seg.x) / 2
+  const my = (from.y + seg.y) / 2
+  // 弦に直交する単位ベクトル
+  const nx = -dy / d
+  const ny = dx / d
+  const sign = seg.sweep ? 1 : -1
+  return { x: mx + sign * h * nx, y: my + sign * h * ny, r }
+}
+
+/** contour の 1 セグメントを SVG のパスコマンドにする */
+function arcCommand(seg: { x: number; y: number; r?: number; sweep: boolean }): string {
+  if (seg.r === undefined) return `L ${seg.x} ${seg.y}`
+  // large-arc は常に 0。輪郭を 180 度を超える弧 1 本で繋ぐと、始点と終点の
+  // 位置だけでは形が一意に決まらず、意図しない側へ回り込む。
+  return `A ${seg.r} ${seg.r} 0 0 ${seg.sweep ? 1 : 0} ${seg.x} ${seg.y}`
 }
 
 /** 設計図に描く作図線を px 単位で組み立てる */
@@ -558,6 +606,75 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
         })
         out.push({ kind: 'point', id: s.id, x: s.cx * M, y: s.cy * M })
         break
+      case 'contour': {
+        // 輪郭を構成する各円弧の「元になった円」を描く。これが作図の証拠で、
+        // これが無いと設計図がただの外形線になり、作図した痕跡が残らない。
+        //
+        // 線は輪郭の大きさに合わせて延長する。半径ぶんで止めると輪郭の際に
+        // 短い線が密集するだけで、毛羽立って見える。作図線は紙面を横切って
+        // 初めて作図に見える。
+        const xs = s.segments.map((g) => g.x)
+        const ys = s.segments.map((g) => g.y)
+        const reach =
+          (Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2) *
+          1.15
+
+        /** a から b の向きへ、中心を挟んで両側に伸ばした線 */
+        const through = (
+          id: string,
+          a: { x: number; y: number },
+          b: { x: number; y: number },
+        ) => {
+          const dx = b.x - a.x
+          const dy = b.y - a.y
+          const len = Math.hypot(dx, dy)
+          if (len < 1e-9) return
+          const ux = (dx / len) * reach
+          const uy = (dy / len) * reach
+          out.push({
+            kind: 'line',
+            id,
+            x1: (a.x - ux) * M,
+            y1: (a.y - uy) * M,
+            x2: (a.x + ux) * M,
+            y2: (a.y + uy) * M,
+          })
+        }
+
+        for (let i = 0; i < s.segments.length; i++) {
+          const from = s.segments[(i - 1 + s.segments.length) % s.segments.length]
+          const seg = s.segments[i]
+          if (seg.r === undefined) {
+            out.push({
+              kind: 'line',
+              id: `${s.id}-${i}`,
+              x1: from.x * M,
+              y1: from.y * M,
+              x2: seg.x * M,
+              y2: seg.y * M,
+            })
+            continue
+          }
+          const c = arcCenter(from, seg)
+          if (!c) continue
+          out.push({ kind: 'circle', id: `${s.id}-${i}`, cx: c.x * M, cy: c.y * M, r: c.r * M })
+          out.push({ kind: 'point', id: `${s.id}-${i}c`, x: c.x * M, y: c.y * M })
+          // 中心から両端へ通す線（延長した直径）と、端点どうしを結ぶ弦。
+          // コンパスと定規で作図するときに実際に引く線。
+          through(`${s.id}-${i}r0`, c, from)
+          through(`${s.id}-${i}r1`, c, seg)
+          out.push({
+            kind: 'line',
+            id: `${s.id}-${i}k`,
+            x1: from.x * M,
+            y1: from.y * M,
+            x2: seg.x * M,
+            y2: seg.y * M,
+          })
+        }
+        break
+      }
+
       case 'poly':
         for (let i = 0; i < s.points.length; i++) {
           const a = s.points[i]

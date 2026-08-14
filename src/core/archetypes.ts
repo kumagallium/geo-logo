@@ -512,6 +512,9 @@ function rotateShapes(shapes: Shape[], deg: number): Shape[] {
       }
       case 'poly':
         return { ...s, points: s.points.map((pt) => rot(pt.x, pt.y)) }
+      case 'contour':
+        // 半径と回り方は回転で変わらない。通過点だけ回せばよい
+        return { ...s, segments: s.segments.map((seg) => ({ ...seg, ...rot(seg.x, seg.y) })) }
     }
   })
 }

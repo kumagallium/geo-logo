@@ -123,6 +123,33 @@ export const polySchema = z.object({
   points: z.array(z.object({ x: coord, y: coord })).min(3).max(64),
 })
 
+/**
+ * 円弧でできた閉じた輪郭。
+ *
+ * 円板を union して形を作ると、接合部に必ず凹んだ切れ込みが出る（実測）。
+ * 幾何ロゴの輪郭は本来、複数の円弧が接点で切り替わりながら 1 周するもので、
+ * 円は「塗る対象」ではなく「輪郭がどの弧を通るかを決める作図線」にすぎない。
+ * これはその輪郭そのものを表す。
+ *
+ * 各セグメントは「1 つ前の点から、半径 r の円弧を描いてこの点まで」を意味する。
+ * r を省略すると直線になる。
+ */
+export const contourSchema = z.object({
+  kind: z.literal('contour'),
+  id,
+  segments: z
+    .array(
+      z.object({
+        x: coord,
+        y: coord,
+        r: size.optional().describe('この点へ至る円弧の半径。省略で直線'),
+        sweep: z.boolean().default(true).describe('true で時計回りに膨らむ'),
+      }),
+    )
+    .min(3)
+    .max(64),
+})
+
 export const shapeSchema = z.discriminatedUnion('kind', [
   circleSchema,
   ringSchema,
@@ -131,6 +158,7 @@ export const shapeSchema = z.discriminatedUnion('kind', [
   wedgeSchema,
   arcSchema,
   polySchema,
+  contourSchema,
 ])
 
 export const constraintSchema = z.discriminatedUnion('type', [
@@ -200,6 +228,7 @@ export type Rect = z.infer<typeof rectSchema>
 export type Wedge = z.infer<typeof wedgeSchema>
 export type Arc = z.infer<typeof arcSchema>
 export type Poly = z.infer<typeof polySchema>
+export type Contour = z.infer<typeof contourSchema>
 export type Shape = z.infer<typeof shapeSchema>
 export type Constraint = z.infer<typeof constraintSchema>
 export type Step = z.infer<typeof stepSchema>
