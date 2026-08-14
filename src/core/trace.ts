@@ -1,5 +1,5 @@
 import type { Contour } from './dsl'
-import { getPaper, resetProject } from './paper-setup'
+import { getPaper, resetProject, type PaperCore } from './paper-setup'
 import { radiusCandidates, snap } from './units'
 
 /**
@@ -81,13 +81,57 @@ const num = (s: string | undefined) => {
 const attr = (tag: string, name: string) =>
   tag.match(new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`))?.[1]
 
+/** 点が閉曲線の内側か（レイキャスティング） */
+function contains(polygon: Vec[], q: Vec): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]
+    const b = polygon[j]
+    if (a.y > q.y !== b.y > q.y && q.x < ((b.x - a.x) * (q.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+/**
+ * 各輪郭が他のいくつに包まれているかを数える。
+ *
+ * 合体済みの輪郭にだけ使うこと。合体前は兄弟どうしが重なるため、重なった
+ * 領域が二重に数えられて実体と穴が入れ替わる。
+ *
+ * 用途は演算の順序決め。外側から順に足し引きしないと、穴を抜いた時点で
+ * その中にある実体まで消える（実測: 蛇の目の中心の点が消えた）。
+ */
+export function nestingDepth(contours: Vec[][]): number[] {
+  return contours.map((c, i) => {
+    if (c.length === 0) return 0
+    let depth = 0
+    for (let j = 0; j < contours.length; j++) {
+      if (i === j || contours[j].length < 3) continue
+      if (contains(contours[j], c[0])) depth++
+    }
+    return depth
+  })
+}
+
 /** 輪郭 1 本。solid が false なら内側の抜き。 */
 export type TracedContour = { points: Vec[]; solid: boolean }
 
 /** 図形の役割。ink は塗り足し、erase は塗り消し。 */
 export type Paint = 'ink' | 'erase' | 'skip'
 
-export type SvgShape = { d: string; evenodd: boolean; matrix: Matrix; paint: Paint }
+export type SvgShape = {
+  d: string
+  evenodd: boolean
+  matrix: Matrix
+  /** 塗りの役割。skip なら塗らない */
+  paint: Paint
+  /** 線の太さ（利用者座標系）。0 なら線なし */
+  strokeWidth: number
+  /** 線の役割 */
+  strokePaint: Paint
+}
 
 const NAMED: Record<string, number> = {
   black: 0,
@@ -188,7 +232,9 @@ export function collectShapes(svgText: string): SvgShape[] {
   // 変換だけでなく塗りも継承する。<svg fill="none" stroke="#000"> のように
   // 親で塗りを消して線だけで描いた紋があり、要素の属性しか見ないと
   // 「塗り指定なし＝黒」と誤解して真っ黒な円板になる（実測）。
-  const stack: Array<{ matrix: Matrix; fill: string }> = [{ matrix: IDENTITY, fill: '' }]
+  const stack: Array<{ matrix: Matrix; fill: string; stroke: string; width: string }> = [
+    { matrix: IDENTITY, fill: '', stroke: '', width: '' },
+  ]
 
   const SHAPES = /^<(path|circle|ellipse|rect|polygon|polyline)\b/
   // 描画されない要素の中身は落とす。clipPath の中の図形まで拾うと、
@@ -208,10 +254,13 @@ export function collectShapes(svgText: string): SvgShape[] {
     const own = attr(tag, 'transform')
     const matrix = own ? multiply(top.matrix, parseTransform(own)) : top.matrix
     const fill = attr(tag, 'fill') ?? tag.match(/[^-]fill\s*:\s*([^;"']+)/)?.[1] ?? top.fill
+    const stroke = attr(tag, 'stroke') ?? tag.match(/[^-]stroke\s*:\s*([^;"']+)/)?.[1] ?? top.stroke
+    const width =
+      attr(tag, 'stroke-width') ?? tag.match(/stroke-width\s*:\s*([^;"']+)/)?.[1] ?? top.width
     const selfClosing = tag.endsWith('/>')
 
     if (/^<(g|svg)\b/.test(tag)) {
-      if (!selfClosing) stack.push({ matrix, fill })
+      if (!selfClosing) stack.push({ matrix, fill, stroke, width })
       continue
     }
 
@@ -220,12 +269,70 @@ export function collectShapes(svgText: string): SvgShape[] {
     if (!d) continue
 
     const paint = paintOf(tag, top.fill)
-    if (paint === 'skip') continue
+    // 線でしか描かれていない紋がある。塗りが無いからと捨てると図形が消える
+    const strokePaint = stroke.trim() === '' ? 'skip' : paintOf(`<x fill="${stroke}"/>`)
+    const strokeWidth = strokePaint === 'skip' ? 0 : Math.max(num(width) || 1, 0)
+    if (paint === 'skip' && strokeWidth <= 0) continue
+
     const rule = attr(tag, 'fill-rule') ?? tag.match(/fill-rule\s*:\s*([a-z]+)/)?.[1] ?? ''
-    out.push({ d, evenodd: rule.trim() === 'evenodd', matrix, paint })
+    out.push({
+      d,
+      evenodd: rule.trim() === 'evenodd',
+      matrix,
+      paint,
+      strokeWidth,
+      strokePaint,
+    })
   }
 
   return out
+}
+
+/**
+ * 線を塗りの帯に変換する。
+ *
+ * paper-core にはパスのオフセットが無い。線に沿って半径 w/2 の円を並べて
+ * 合体させると、丸い端と丸い継ぎ目を持つ帯になる。刷毛で撫でるのと同じ理屈で、
+ * 実装が短く、自己交差する線でも破綻しない。
+ *
+ * 合体は左から順にではなく二分木で畳む。円が数百個になると、逐次の合体は
+ * 結果が育つほど 1 回が重くなる。
+ */
+function strokeToFill(p: PaperCore, path: paper.PathItem, width: number): paper.PathItem | null {
+  const r = width / 2
+  if (r <= 0) return null
+
+  const parts: paper.PathItem[] = []
+  const walk = (child: paper.Path) => {
+    const len = child.length
+    if (len <= 0) return
+    // 刻みは半径より細かく。粗いと帯の縁が波打つ
+    const step = Math.max(r * 0.6, len / 400)
+    for (let d = 0; d <= len + step; d += step) {
+      const pt = child.getPointAt(Math.min(d, len))
+      if (pt) parts.push(new p.Path.Circle(pt, r))
+    }
+  }
+  const children = (path.children?.length ? path.children : [path]) as paper.Path[]
+  for (const child of children) walk(child)
+  if (parts.length === 0) return null
+
+  let level = parts
+  while (level.length > 1) {
+    const next: paper.PathItem[] = []
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 >= level.length) {
+        next.push(level[i])
+        continue
+      }
+      const merged = level[i].unite(level[i + 1])
+      level[i].remove()
+      level[i + 1].remove()
+      next.push(merged)
+    }
+    level = next
+  }
+  return level[0]
 }
 
 /**
@@ -252,7 +359,29 @@ export function sampleContoursFromSvg(svgText: string, count = 720): TracedConto
     // 揃う。向きで判定するのが最も確実。
     // 塗り順どおりに積み上げる。後に描かれたものが前を覆うという SVG の
     // 意味をそのまま辿れば、白地に黒でも黒地に白抜きでも同じ手順で扱える。
-    let united: paper.PathItem | null = null
+    let united = null as paper.PathItem | null
+
+    /** 図形 1 つを、役割にしたがって積む */
+    const apply = (item: paper.PathItem, paint: Paint) => {
+      if (paint === 'skip') {
+        item.remove()
+        return
+      }
+      if (!united) {
+        // まだ何も無いところから消しても何も起きない（先頭の白い背景など）
+        if (paint === 'erase') {
+          item.remove()
+          return
+        }
+        united = item
+        return
+      }
+      const next: paper.PathItem = paint === 'ink' ? united.unite(item) : united.subtract(item)
+      united.remove()
+      item.remove()
+      united = next
+    }
+
     for (const el of all) {
       const item = new p.CompoundPath(el.d)
       item.fillRule = el.evenodd ? 'evenodd' : 'nonzero'
@@ -260,19 +389,14 @@ export function sampleContoursFromSvg(svgText: string, count = 720): TracedConto
       // 図形どうしの位置関係が合わないまま union することになる
       if (el.matrix !== IDENTITY) item.transform(new p.Matrix(...el.matrix))
 
-      if (!united) {
-        // まだ何も無いところから消しても何も起きない（先頭の白い背景など）
-        if (el.paint === 'erase') {
-          item.remove()
-          continue
-        }
-        united = item
-        continue
+      if (el.strokeWidth > 0) {
+        // 線幅も変換の拡大率を受ける
+        const scale = Math.sqrt(Math.abs(el.matrix[0] * el.matrix[3] - el.matrix[1] * el.matrix[2]))
+        const band = strokeToFill(p, item, el.strokeWidth * (scale || 1))
+        if (band) apply(band, el.strokePaint)
       }
-      const next: paper.PathItem = el.paint === 'ink' ? united.unite(item) : united.subtract(item)
-      united.remove()
+      apply(item.clone(), el.paint)
       item.remove()
-      united = next
     }
     if (!united) return []
 
@@ -418,6 +542,24 @@ function maxDeviation(points: Vec[], c: { cx: number; cy: number; r: number }): 
   return worst
 }
 
+/** 両端を結ぶ弦から、点列が最も離れる距離 */
+function maxDeviationFromChord(points: Vec[]): number {
+  const a = points[0]
+  const b = points[points.length - 1]
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.hypot(dx, dy)
+  // 始点と終点が重なるなら「直線」ではない。伸ばさせない
+  if (len < 1e-9) return Number.POSITIVE_INFINITY
+
+  let worst = 0
+  for (const q of points) {
+    const d = Math.abs((q.x - a.x) * dy - (q.y - a.y) * dx) / len
+    if (d > worst) worst = d
+  }
+  return worst
+}
+
 /** 中心から見た角度差（符号つき、-π〜π） */
 function angleDelta(from: number, to: number): number {
   let d = to - from
@@ -448,10 +590,23 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
 
     while (end <= n) {
       const window = points.slice(start, end + 1)
-      const c = fitCircle(window)
+      // 円弧と直線の両方を当てて、誤差の小さいほうを採る。
+      //
+      // 半径や行列式の大きさで直線かどうかを判定してはいけない。丸め誤差で
+      // わずかに非直線になった点列に対し、最小二乗が極小半径のでたらめな円を
+      // 返すことがあり、そのずれで窓が伸びず菱形が団子になった（実測）。
+      // 誤差そのものを比べれば、退化した当てはめは自然に負ける。
+      const fitted = fitCircle(window)
+      const devLine = maxDeviationFromChord(window)
+      const devArc =
+        fitted && fitted.r <= straight ? maxDeviation(window, fitted) : Number.POSITIVE_INFINITY
 
-      if (c && c.r <= straight) {
-        if (maxDeviation(window, c) > tol) break
+      // 円弧を採るのは、直線より明らかに良いときだけ。同程度なら直線を選ぶ。
+      // 紋や記号の直線の辺が、わずかに膨らんだ円弧になるのを防ぐ
+      const c = devArc * 2 < devLine ? fitted : null
+      if (Math.min(devArc, devLine) > tol) break
+
+      if (c) {
         const a0 = Math.atan2(window[0].y - c.cy, window[0].x - c.cx)
         const a1 = Math.atan2(
           window[window.length - 1].y - c.cy,
@@ -466,7 +621,7 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
     const stop = accepted?.end ?? Math.min(start + 3, n)
     const from = points[start]
     const to = points[Math.min(stop, n - 1)]
-    const c = accepted?.c && accepted.c.r <= straight ? accepted.c : null
+    const c = accepted?.c ?? null
 
     if (c) {
       // 膨らむ向きは、当てた円の中心から見た角度が増える向きかどうかで決まる。

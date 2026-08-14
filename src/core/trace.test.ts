@@ -5,6 +5,7 @@ import {
   collectShapes,
   contourComplexity,
   fitToModule,
+  nestingDepth,
   paintOf,
   parseTransform,
   sampleContours,
@@ -261,5 +262,56 @@ describe('paintOf', () => {
     expect(paintOf('<circle r="4"/>', '#fff')).toBe('erase')
     // 自身の指定は継承より優先する
     expect(paintOf('<circle r="4" fill="#000"/>', '#fff')).toBe('ink')
+  })
+})
+
+describe('直線の扱い', () => {
+  /**
+   * 半径や行列式の大きさで直線かどうかを判定してはいけない。丸め誤差で
+   * わずかに非直線になった点列に、最小二乗が極小半径のでたらめな円を返す。
+   * そのずれで窓が伸びず、菱形が団子になった（実測: 武田菱が 85 本の円弧に）。
+   */
+  it('多角形は円弧ではなく直線で表される', () => {
+    // 菱形を 4 辺ぶんサンプリング
+    const corners = [
+      { x: 0, y: -2 },
+      { x: 3, y: 0 },
+      { x: 0, y: 2 },
+      { x: -3, y: 0 },
+    ]
+    const points: Vec[] = []
+    for (let i = 0; i < corners.length; i++) {
+      const a = corners[i]
+      const b = corners[(i + 1) % corners.length]
+      for (let t = 0; t < 60; t++) {
+        points.push({ x: a.x + ((b.x - a.x) * t) / 60, y: a.y + ((b.y - a.y) * t) / 60 })
+      }
+    }
+
+    const { segments } = traceArcs(points, { maxArcs: 12, snapRadii: false })
+    expect(segments).toHaveLength(4)
+    for (const s of segments) expect(s.r).toBeUndefined()
+  })
+
+  it('本物の円は直線に倒れない', () => {
+    const { segments } = traceArcs(circlePoints(3), { maxArcs: 10, snapRadii: false })
+    for (const s of segments) expect(s.r).toBeDefined()
+  })
+})
+
+describe('nestingDepth', () => {
+  /**
+   * 用途は演算の順序決め。外側から順に足し引きしないと、穴を抜いた時点で
+   * その中にある実体まで消える（実測: 蛇の目の中心の点が消えた）。
+   */
+  it('入れ子の段数を数える', () => {
+    const outer = circlePoints(10)
+    const hole = circlePoints(6)
+    const dot = circlePoints(2)
+    expect(nestingDepth([outer, hole, dot])).toEqual([0, 1, 2])
+  })
+
+  it('離れた輪郭はどちらも 0 段', () => {
+    expect(nestingDepth([circlePoints(2, 90, -8, 0), circlePoints(2, 90, 8, 0)])).toEqual([0, 0])
   })
 })

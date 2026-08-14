@@ -8,7 +8,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Shape, Step } from '../src/core/index.js'
 import { compile } from '../src/core/index.js'
-import { allocateArcs, fitToModule, sampleContoursFromSvg, traceArcs } from '../src/core/trace.js'
+import {
+  allocateArcs,
+  fitToModule,
+  nestingDepth,
+  sampleContoursFromSvg,
+  traceArcs,
+} from '../src/core/trace.js'
 
 const [file, out = 'trace', arcs = '12'] = process.argv.slice(2)
 const svg = readFileSync(file, 'utf8')
@@ -38,9 +44,13 @@ contours.forEach((points, i) => {
   steps.push({ op: traced[i].solid ? 'add' : 'sub', ref: id })
 })
 
-// 塗りを全部合体させてから抜く。逐次に混ぜると、ある実体の穴が別の実体を
-// 削ってしまう
-steps.sort((a, b) => (a.op === b.op ? 0 : a.op === 'add' ? -1 : 1))
+// 外側から順に足し引きする。塗りを全部先に合体させてから抜くと、穴を抜いた
+// 時点でその中にある実体まで消える（蛇の目の中心の点が消えた）
+const depth = nestingDepth(contours)
+const order = shapes.map((_, i) => i).sort((a, b) => depth[a] - depth[b])
+const sorted = order.map((i) => steps[i])
+steps.length = 0
+steps.push(...sorted)
 
 const result = compile({
   name: out,
