@@ -167,6 +167,37 @@ export function diagnose(result: CompileResult): string[] {
     )
   }
 
+  if (result.built.unrelated.length > 0) {
+    problems.push(
+      `シェイプ ${result.built.unrelated.join(', ')} が他の要素と何の関係も持たず浮いています。` +
+        '重ねる（intersect / sub で噛み合わせる）か、constraints で関係を宣言してください' +
+        '（tangent で接する / onCircle で中心を相手の円周上に置く / concentric で同心 / align で整列）。' +
+        '離れて置かれた部品は 1 つのマークに見えません。',
+    )
+  }
+
+  // 小サイズでの成立性。ロゴはファビコンや印刷でも読めなければ使えない。
+  const { inkRatio, minStrokeRatio } = result.built
+  if (inkRatio > 0 && inkRatio < 0.12) {
+    problems.push(
+      `塗りが外接矩形の ${(inkRatio * 100).toFixed(0)}% しかなく、大半が空白です。` +
+        '線を太くするか要素を大きくして、小さいサイズでも形が読めるようにしてください' +
+        '（目安 15〜50%）。',
+    )
+  }
+  if (inkRatio > 0.92) {
+    problems.push(
+      `塗りが外接矩形の ${(inkRatio * 100).toFixed(0)}% を占めており、ほぼ単色の塊です。` +
+        'sub で抜くか、要素の関係で形を作ってください。',
+    )
+  }
+  if (minStrokeRatio !== null && minStrokeRatio < 0.04) {
+    problems.push(
+      `最も細い線がマークの短辺の 1/${Math.round(1 / minStrokeRatio)} しかなく、` +
+        '小さいサイズで消えます。線幅を短辺の 1/25 以上にしてください。',
+    )
+  }
+
   const { artBounds } = result.built
   const M = result.design.module
   if (artBounds.width < M * 0.5 || artBounds.height < M * 0.5) {

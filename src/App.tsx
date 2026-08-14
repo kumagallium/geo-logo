@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { compile, samples, type CompileResult, type LogoDesign } from './core/index'
 import { localizeAiError, OPEN_SETTINGS_EVENT } from './lib/ai-error'
 import { detectRuntimeMode, type RuntimeMode } from './lib/runtime-mode'
-import { requestDesign } from './features/designer/api'
+import { requestDesigns } from './features/designer/api'
+import { Candidates } from './features/designer/Candidates'
 import { Inspector } from './features/designer/Inspector'
 import { PromptBar } from './features/designer/PromptBar'
 import { SvgPane } from './features/designer/SvgPane'
@@ -17,6 +18,9 @@ export default function App() {
   const [mode, setMode] = useState<RuntimeMode | null>(null)
   const [models, setModels] = useState<ModelSummary[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 同じブリーフから複数案を出し、人が選ぶ。構図の良否は機械判定できないため。
+  const [candidates, setCandidates] = useState<LogoDesign[]>([])
+  const CANDIDATE_COUNT = 4
 
   const refreshModels = useCallback(async () => {
     try {
@@ -55,11 +59,19 @@ export default function App() {
     setBusy(true)
     setError(null)
     try {
-      const res = await requestDesign(brief)
-      setDesign(res.design)
-      const problems = res.attempts.at(-1)?.problems ?? []
-      if (problems.length > 0) {
-        setError(`幾何に未解決の問題が残っています: ${problems.join(' / ')}`)
+      const results = await requestDesigns(brief, CANDIDATE_COUNT)
+      const ok = results.filter((r) => r.ok)
+      if (ok.length === 0) {
+        // 全滅したときは最初の失敗を見せる（同じ原因のことが多い）
+        const first = results.find((r) => !r.ok)
+        throw first && !first.ok ? first.error : new Error('設計を生成できませんでした')
+      }
+      const designs = ok.map((r) => r.design)
+      setCandidates(designs)
+      setDesign(designs[0])
+      const failed = results.length - ok.length
+      if (failed > 0) {
+        setError(`${results.length} 案のうち ${failed} 案が幾何の判定で落ちました（残りを表示しています）`)
       }
     } catch (err) {
       setError(localizeAiError(err))
@@ -81,7 +93,10 @@ export default function App() {
         mode={mode}
         activeModel={activeModel}
         onGenerate={generate}
-        onSample={setDesign}
+        onSample={(d) => {
+          setCandidates([])
+          setDesign(d)
+        }}
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
@@ -91,6 +106,9 @@ export default function App() {
       {compiled && (
         <main className="workspace">
           <div className="panes">
+            {candidates.length > 1 && (
+              <Candidates designs={candidates} selected={design} onSelect={setDesign} />
+            )}
             <SvgPane
               title="完成ロゴ"
               subtitle={`${compiled.built.parts.length} パーツ / ${compiled.design.module}px per module`}

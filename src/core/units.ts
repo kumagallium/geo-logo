@@ -111,6 +111,57 @@ export function snap(
   return { value: best.value, label: best.label, changed }
 }
 
+/** 黄金角。フィロタキシス（葉序）に現れる角度で、分割の要としても使われる。 */
+export const GOLDEN_ANGLE = 360 / (PHI * PHI) // ≈ 137.508°
+
+let cachedAngle: Candidate[] | null = null
+
+/**
+ * 角度の候補。
+ *
+ * 半径や座標を丸めても、角度が 47° や -53° のままだと構成が濁る。
+ * 作図に使われる角度は歴史的にごく少数で、15° 刻み（正多角形の分割）と
+ * 黄金角がその大半を占める。
+ */
+export function angleCandidates(): Candidate[] {
+  if (cachedAngle) return cachedAngle
+  const out: Candidate[] = []
+  for (let deg = -360; deg <= 360; deg += 15) {
+    out.push({ value: deg, label: `${deg}°` })
+  }
+  for (const base of [GOLDEN_ANGLE, GOLDEN_ANGLE / 2, 180 - GOLDEN_ANGLE]) {
+    for (const sign of [1, -1]) {
+      const v = Math.round(sign * base * 1000) / 1000
+      out.push({ value: v, label: `${sign < 0 ? '-' : ''}黄金角` })
+    }
+  }
+  const seen = new Map<string, Candidate>()
+  for (const c of out) {
+    const key = c.value.toFixed(3)
+    if (!seen.has(key)) seen.set(key, c)
+  }
+  cachedAngle = [...seen.values()].sort((a, b) => a.value - b.value)
+  return cachedAngle
+}
+
+/** 角度は相対誤差ではなく絶対角で丸める（0° 付近で相対誤差が発散するため） */
+export function snapAngle(
+  value: number,
+  toleranceDeg = 7,
+): { value: number; label: string | null; changed: boolean } {
+  let best: Candidate | null = null
+  let bestDist = Infinity
+  for (const c of angleCandidates()) {
+    const d = Math.abs(c.value - value)
+    if (d < bestDist) {
+      bestDist = d
+      best = c
+    }
+  }
+  if (!best || bestDist > toleranceDeg) return { value, label: null, changed: false }
+  return { value: best.value, label: best.label, changed: Math.abs(best.value - value) > 1e-9 }
+}
+
 /** グリッド線を引くための刻み幅（モジュール単位） */
 export function gridStep(grid: 'golden' | 'sqrt2' | 'square' | 'isometric'): number {
   switch (grid) {

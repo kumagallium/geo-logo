@@ -111,7 +111,48 @@ const monogramG: LogoDesign = {
   ],
 }
 
-export const samples: LogoDesign[] = [vesicaEye, crescent, monogramG]
+const signal: LogoDesign = {
+  name: 'Signal',
+  concept:
+    '中心の点から同心の円弧を段階的に広げ、放射を表す。半径は φ の冪で刻み、線幅は全て等しくして、円弧だけで構成する。',
+  module: 48,
+  grid: 'golden',
+  palette: { primary: '#111111', secondary: '#8A8A8A', accent: '#C2410C', background: '#FFFFFF' },
+  shapes: [
+    { kind: 'circle', id: 'core', cx: 0, cy: 0, r: PHI / 2, pinned: true },
+    { kind: 'arc', id: 'wave1', cx: 0, cy: 0, r: PHI * PHI, w: PHI / 2, a0: -50, a1: 50, cap: 'butt' },
+    {
+      kind: 'arc',
+      id: 'wave2',
+      cx: 0,
+      cy: 0,
+      r: PHI * PHI * PHI,
+      w: PHI / 2,
+      a0: -50,
+      a1: 50,
+      cap: 'butt',
+    },
+  ],
+  constraints: [
+    { type: 'concentric', a: 'core', b: 'wave1' },
+    { type: 'concentric', a: 'core', b: 'wave2' },
+  ],
+  groups: [],
+  parts: [
+    {
+      id: 'mark',
+      fill: 'primary',
+      mirror: 'none',
+      steps: [
+        { op: 'add', ref: 'core' },
+        { op: 'add', ref: 'wave1' },
+        { op: 'add', ref: 'wave2' },
+      ],
+    },
+  ],
+}
+
+export const samples: LogoDesign[] = [vesicaEye, crescent, monogramG, signal]
 
 export function sampleByName(name: string): LogoDesign | undefined {
   return samples.find((s) => s.name === name)

@@ -20,6 +20,26 @@ export type DesignResponse = {
  * 静的モード:     ブラウザから直接プロバイダーを叩く。設計エージェント
  *                （lib/design-agent.ts）はどちらでも同じものを使う。
  */
+export type CandidateResult =
+  | { ok: true; design: LogoDesign; attempts: DesignResponse['attempts']; model: string }
+  | { ok: false; error: unknown }
+
+/**
+ * 同じブリーフから候補を N 件並行生成する。
+ *
+ * 構図の良し悪しは機械判定できない。同心配置のように「離れているが正しい」構成が
+ * あり、要素間の距離で弾くと良い設計まで落ちてしまう（Signal サンプルがまさにそれ）。
+ * 幾何の破綻・小サイズでの破綻は自動で弾き、最後の美的判断は人に委ねる分担にする。
+ */
+export async function requestDesigns(brief: string, count: number): Promise<CandidateResult[]> {
+  const runs = Array.from({ length: Math.max(1, count) }, () =>
+    requestDesign(brief)
+      .then((r): CandidateResult => ({ ok: true, ...r }))
+      .catch((error): CandidateResult => ({ ok: false, error })),
+  )
+  return Promise.all(runs)
+}
+
 export async function requestDesign(brief: string): Promise<DesignResponse> {
   const mode = await detectRuntimeMode()
 

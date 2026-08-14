@@ -5,7 +5,7 @@ import {
   type LogoDesign,
   type Shape,
 } from './dsl'
-import { coordCandidates, radiusCandidates, snap } from './units'
+import { coordCandidates, radiusCandidates, snap, snapAngle } from './units'
 
 export type NormalizeNote = {
   shapeId: string
@@ -72,6 +72,12 @@ export function normalize(input: LogoDesign): NormalizeResult {
       record(s.id, field, v, r.value, r.label, 'snap')
       return r.value
     }
+    // 角度も丸める。半径だけ整えても、47° や -53° が残ると構成が濁る。
+    const snapDeg = (field: string, v: number) => {
+      const r = snapAngle(v)
+      record(s.id, field, v, r.value, r.label, 'snap')
+      return r.value
+    }
     switch (s.kind) {
       case 'circle':
         s.r = snapSize('r', s.r)
@@ -86,6 +92,14 @@ export function normalize(input: LogoDesign): NormalizeResult {
         break
       case 'wedge':
         s.r = snapSize('r', s.r)
+        s.a0 = snapDeg('a0', s.a0)
+        s.a1 = snapDeg('a1', s.a1)
+        break
+      case 'arc':
+        s.r = snapSize('r', s.r)
+        s.w = snapSize('w', s.w)
+        s.a0 = snapDeg('a0', s.a0)
+        s.a1 = snapDeg('a1', s.a1)
         break
       case 'bar':
         s.w = snapSize('w', s.w)
@@ -94,11 +108,18 @@ export function normalize(input: LogoDesign): NormalizeResult {
         s.w = snapSize('w', s.w)
         s.h = snapSize('h', s.h)
         if (s.radius != null) s.radius = snapSize('radius', s.radius)
+        if (s.rotate != null) s.rotate = snapDeg('rotate', s.rotate)
         break
       case 'poly':
         break
     }
   }
+
+  // --- Step 1.5: 線の太さを揃える ---
+  // 幾何ロゴでは線の太さが揃っていることが「整って見える」ことの大半を占める。
+  // 0.5 と 0.618 のように僅かに違う値が混ざると、意図の無いばらつきに見える。
+  // 近い太さ同士だけを 1 つに寄せる（明確に違う太さは意図的な使い分けとして残す）。
+  unifyStrokeWidths(design, record)
 
   // --- Step 2: 座標のスナップ（制約前の初期位置合わせ）---
   // pinned は「作者が意図して置いた点」なので一切触らない。
@@ -248,6 +269,60 @@ export function normalize(input: LogoDesign): NormalizeResult {
   }
 
   return { design, notes, unresolved }
+}
+
+type StrokeShape = { id: string; get: () => number; set: (v: number) => void }
+
+/**
+ * 線状シェイプ（bar / ring / arc）の太さをクラスタリングして揃える。
+ *
+ * 「近い」の閾値は 25%。これを超える差は意図的な太さの使い分けとみなして残す。
+ * 各クラスタの代表値には中央値を使う（平均は外れ値に引きずられる）。
+ */
+function unifyStrokeWidths(
+  design: LogoDesign,
+  record: (
+    shapeId: string,
+    field: string,
+    from: number,
+    to: number,
+    label: string | null,
+    reason: NormalizeNote['reason'],
+  ) => void,
+): void {
+  const strokes: StrokeShape[] = []
+  for (const s of design.shapes) {
+    if (s.kind === 'bar' || s.kind === 'ring' || s.kind === 'arc') {
+      strokes.push({ id: s.id, get: () => s.w, set: (v) => (s.w = v) })
+    }
+  }
+  if (strokes.length < 2) return
+
+  const sorted = [...strokes].sort((a, b) => a.get() - b.get())
+  let cluster: StrokeShape[] = [sorted[0]]
+
+  const flush = () => {
+    if (cluster.length < 2) return
+    const values = cluster.map((c) => c.get()).sort((a, b) => a - b)
+    const median = values[Math.floor(values.length / 2)]
+    for (const member of cluster) {
+      const before = member.get()
+      if (Math.abs(before - median) < 1e-9) continue
+      member.set(median)
+      record(member.id, 'w', before, median, '線幅の統一', 'snap')
+    }
+  }
+
+  for (const s of sorted.slice(1)) {
+    const base = cluster[0].get()
+    if (s.get() / Math.max(base, 1e-9) <= 1.25) {
+      cluster.push(s)
+    } else {
+      flush()
+      cluster = [s]
+    }
+  }
+  flush()
 }
 
 /** a,b の中心間距離を target に近づける。pinned 側は動かさない。 */

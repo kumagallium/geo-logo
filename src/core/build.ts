@@ -33,6 +33,30 @@ export type BuildResult = {
    * なので他の判定を素通りするが、ロゴとしては完全な失敗。
    */
   collapsedTo: string | null
+  /**
+   * インク比率 = 塗り面積 / 外接矩形の面積。
+   *
+   * ロゴが小さいサイズで成立するかの古典的な指標。極端に低いと
+   * 「線が細く、大半が空白」のマークになり、16px では消える。
+   * 逆に極端に高いと、ただの塗りつぶし図形になる。
+   */
+  inkRatio: number
+  /**
+   * 最も細い線の太さ / マークの短辺。
+   * 1/25 を下回ると小サイズで線が飛ぶ（印刷・ファビコンで破綻する）。
+   */
+  minStrokeRatio: number | null
+  /**
+   * どのシェイプとも関係を持たない孤立シェイプの id。
+   *
+   * 古典的な幾何ロゴは「重なる / 接する / 同心 / 整列」のいずれかで
+   * 全要素が結ばれている。関係の無い要素が離れて置かれると、個々が綺麗でも
+   * 「部品が散らばった絵」になる。
+   *
+   * 判定は「実際に重なっている」か「constraints で関係が宣言されている」か。
+   * 同心の帯（重ならないが正しい構成）を誤検出しないよう、宣言も辺として数える。
+   */
+  unrelated: string[]
   warnings: string[]
 }
 
@@ -117,10 +141,103 @@ export function build(design: LogoDesign): BuildResult {
   const artBounds = computeBounds(p, parts, [])
   const bounds = computeBounds(p, parts, construction)
   const collapsedTo = findCollapse(p, design, partShapes)
+  const unrelated = findUnrelatedShapes(design, primitives)
+
+  // インク比率と最細線は、px 換算前（モジュール単位）で測る
+  const inkArea = partShapes.reduce((sum, s) => sum + areaOf(s), 0)
+  const artW = artBounds.width / M
+  const artH = artBounds.height / M
+  const inkRatio = artW > 0 && artH > 0 ? inkArea / (artW * artH) : 0
+
+  const strokeWidths = design.shapes
+    .filter((s): s is Extract<Shape, { w: number }> => 'w' in s && s.kind !== 'rect')
+    .map((s) => s.w)
+  const shortSide = Math.min(artW, artH)
+  const minStrokeRatio =
+    strokeWidths.length > 0 && shortSide > 0 ? Math.min(...strokeWidths) / shortSide : null
+
   for (const shape of partShapes) shape.remove()
 
   resetProject()
-  return { parts, construction, bounds, artBounds, collapsedTo, warnings }
+  return {
+    parts,
+    construction,
+    bounds,
+    artBounds,
+    collapsedTo,
+    inkRatio,
+    minStrokeRatio,
+    unrelated,
+    warnings,
+  }
+}
+
+/**
+ * 全要素が幾何学的な関係で結ばれているかを調べ、孤立したものを返す。
+ *
+ * 辺の条件は 2 つ:
+ *   - 実際に重なっている（intersect の面積 > 0）
+ *   - constraints で関係が宣言されている（tangent / concentric / align / onCircle）
+ *
+ * 接しているだけの円は交差面積が 0 になるため、幾何だけでは辺が張れない。
+ * 良い設計はそれを constraints で宣言しているので、宣言も辺として数える。
+ * これは同時に「関係は宣言せよ」という設計規律を促すことにもなる。
+ */
+function findUnrelatedShapes(
+  design: LogoDesign,
+  primitives: Map<string, paper.PathItem>,
+): string[] {
+  // 実際に使われているシェイプだけを対象にする
+  const used = new Set<string>()
+  for (const g of design.groups) for (const s of g.steps) used.add(s.ref)
+  for (const part of design.parts) for (const s of part.steps) used.add(s.ref)
+  const ids = design.shapes.map((s) => s.id).filter((id) => used.has(id) && primitives.has(id))
+
+  // 総当たりのブーリアンは重い。実用域を超える構成では判定を諦める。
+  if (ids.length < 2 || ids.length > 20) return []
+
+  const parent = new Map(ids.map((id) => [id, id]))
+  const find = (a: string): string => {
+    let root = a
+    while (parent.get(root) !== root) root = parent.get(root)!
+    return root
+  }
+  const union = (a: string, b: string) => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent.set(ra, rb)
+  }
+
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      if (find(ids[i]) === find(ids[j])) continue
+      const a = primitives.get(ids[i])!.clone()
+      const b = primitives.get(ids[j])!.clone()
+      const overlap = a.intersect(b)
+      const hit = areaOf(overlap) > 1e-6
+      overlap.remove()
+      a.remove()
+      b.remove()
+      if (hit) union(ids[i], ids[j])
+    }
+  }
+
+  for (const c of design.constraints) {
+    const members = c.type === 'align' ? c.ids : c.type === 'onCircle' ? [c.point, c.circle] : [c.a, c.b]
+    const present = members.filter((m) => parent.has(m))
+    for (let i = 1; i < present.length; i++) union(present[0], present[i])
+  }
+
+  const groups = new Map<string, string[]>()
+  for (const id of ids) {
+    const root = find(id)
+    groups.set(root, [...(groups.get(root) ?? []), id])
+  }
+  if (groups.size <= 1) return []
+
+  // 最大の塊を「本体」とみなし、それ以外を孤立として返す
+  const clusters = [...groups.values()].sort((a, b) => b.length - a.length)
+  return clusters.slice(1).flat()
 }
 
 /**
@@ -292,6 +409,59 @@ function makePrimitive(p: PaperCore, s: Shape): paper.PathItem | null {
       return path
     }
 
+    case 'arc': {
+      // 円弧の帯 = 環（外半径 r+w/2、内半径 r-w/2）∩ 扇形。
+      // ring と wedge の合成でも書けるが、円弧は幾何ロゴの主役なので
+      // 1 プリミティブとして提供する。DSL 上のコストが直線と同じでないと、
+      // モデルは常に直線を選んでしまう。
+      const center = new p.Point(s.cx, s.cy)
+      const outerR = s.r + s.w / 2
+      const innerR = Math.max(s.r - s.w / 2, 1e-4)
+
+      const outer = new p.Path.Circle(center, outerR)
+      const inner = new p.Path.Circle(center, innerR)
+      const band = outer.subtract(inner)
+      outer.remove()
+      inner.remove()
+
+      const span = ((s.a1 - s.a0) * Math.PI) / 180
+      if (Math.abs(span) >= Math.PI * 2 - 1e-9) return band
+
+      const sector = makePrimitive(p, {
+        kind: 'wedge',
+        id: `${s.id}__sector`,
+        cx: s.cx,
+        cy: s.cy,
+        // 扇形は帯を確実に覆う必要があるので外半径より大きく取る
+        r: outerR * 1.5,
+        a0: s.a0,
+        a1: s.a1,
+      })
+      if (!sector) {
+        band.remove()
+        return null
+      }
+      const clipped = band.intersect(sector)
+      band.remove()
+      sector.remove()
+
+      if (s.cap !== 'round') return clipped
+
+      const at = (deg: number) => {
+        const rad = (deg * Math.PI) / 180
+        return center.add(new p.Point(Math.cos(rad) * s.r, Math.sin(rad) * s.r))
+      }
+      const capA = new p.Path.Circle(at(s.a0), s.w / 2)
+      const capB = new p.Path.Circle(at(s.a1), s.w / 2)
+      const withA = clipped.unite(capA)
+      const result = withA.unite(capB)
+      clipped.remove()
+      capA.remove()
+      capB.remove()
+      withA.remove()
+      return result
+    }
+
     case 'poly': {
       const path = new p.Path(s.points.map((pt) => new p.Point(pt.x, pt.y)))
       path.closed = true
@@ -321,6 +491,24 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
         })
         out.push({ kind: 'point', id: s.id, x: s.cx * M, y: s.cy * M })
         break
+      case 'arc': {
+        // 設計図には中心線の円と、両端を切る半径線を描く（実際の作図と同じ）
+        out.push({ kind: 'circle', id: s.id, cx: s.cx * M, cy: s.cy * M, r: s.r * M })
+        out.push({ kind: 'point', id: s.id, x: s.cx * M, y: s.cy * M })
+        const reach = (s.r + s.w) * M
+        for (const [i, deg] of [s.a0, s.a1].entries()) {
+          const rad = (deg * Math.PI) / 180
+          out.push({
+            kind: 'line',
+            id: `${s.id}-r${i}`,
+            x1: s.cx * M,
+            y1: s.cy * M,
+            x2: s.cx * M + Math.cos(rad) * reach,
+            y2: s.cy * M + Math.sin(rad) * reach,
+          })
+        }
+        break
+      }
       case 'bar':
         out.push({
           kind: 'line',

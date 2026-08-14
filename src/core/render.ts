@@ -80,6 +80,7 @@ export function renderBlueprint(
   const hair = Math.max(round(Math.min(box.width, box.height) / 900), 0.4)
 
   const gridLines = buildGrid(box, gridStep(design.grid) * M, grid, hair)
+  const goldenGuides = buildGoldenGuides(box, built.artBounds, M, hair)
 
   const shapes = built.construction
     .map((c) => {
@@ -127,6 +128,9 @@ export function renderBlueprint(
   <g data-layer="grid">
     ${gridLines}
   </g>
+  <g data-layer="proportion">
+    ${goldenGuides}
+  </g>
   <g data-layer="silhouette">
     ${silhouette}
   </g>
@@ -162,6 +166,80 @@ function buildGrid(box: Bounds, step: number, color: string, hair: number): stri
     )
   }
   return lines.join('\n    ')
+}
+
+/**
+ * 比例の作図を重ねる。
+ *
+ * 設計図の役目は「どの比で決めたか」を見せることなので、実際に使っている
+ * 比例系そのものを描く:
+ *   - 原点からの φ 冪の同心円 … 半径の候補集合（units.ts）を可視化したもの
+ *   - 完成形の外接矩形と、その黄金分割線 … 全体の比を確認するための線
+ */
+function buildGoldenGuides(box: Bounds, art: Bounds, M: number, hair: number): string {
+  const tone = '#C9B896' // 比例の線だけ暖色にして、作図線（寒色）と区別する
+  const out: string[] = []
+
+  // 原点からの φ 冪の同心円
+  const maxR = Math.max(
+    Math.hypot(box.x, box.y),
+    Math.hypot(box.x + box.width, box.y + box.height),
+  )
+  for (let n = -2; n <= 6; n++) {
+    const r = Math.pow(PHI, n) * M
+    if (r < M * 0.2 || r > maxR) continue
+    out.push(
+      `<circle cx="0" cy="0" r="${round(r)}" fill="none" stroke="${tone}" stroke-width="${hair}" stroke-opacity="0.55" stroke-dasharray="${round(M * 0.05)} ${round(M * 0.07)}"/>`,
+    )
+  }
+
+  if (art.width <= 0 || art.height <= 0) return out.join('\n    ')
+
+  // 完成形の外接矩形
+  out.push(
+    `<rect x="${round(art.x)}" y="${round(art.y)}" width="${round(art.width)}" height="${round(art.height)}" fill="none" stroke="${tone}" stroke-width="${hair * 1.2}" stroke-opacity="0.8"/>`,
+  )
+
+  // その黄金分割線（左右・上下から 1/φ の位置）
+  const dx = art.width / PHI
+  const dy = art.height / PHI
+  for (const x of [art.x + dx, art.x + art.width - dx]) {
+    out.push(
+      `<line x1="${round(x)}" y1="${round(art.y)}" x2="${round(x)}" y2="${round(art.y + art.height)}" stroke="${tone}" stroke-width="${hair}" stroke-opacity="0.7" stroke-dasharray="${round(M * 0.14)} ${round(M * 0.05)} ${round(M * 0.03)} ${round(M * 0.05)}"/>`,
+    )
+  }
+  for (const y of [art.y + dy, art.y + art.height - dy]) {
+    out.push(
+      `<line x1="${round(art.x)}" y1="${round(y)}" x2="${round(art.x + art.width)}" y2="${round(y)}" stroke="${tone}" stroke-width="${hair}" stroke-opacity="0.7" stroke-dasharray="${round(M * 0.14)} ${round(M * 0.05)} ${round(M * 0.03)} ${round(M * 0.05)}"/>`,
+    )
+  }
+
+  // 全体の縦横比。φ / √2 / 1:1 に近ければ、その名前を出す
+  const ratio = art.width / art.height
+  out.push(
+    `<text x="${round(art.x)}" y="${round(art.y - M * 0.12)}" fill="#8A7A5C" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${round(M * 0.15)}">${escapeText(describeRatio(ratio))}</text>`,
+  )
+
+  return out.join('\n    ')
+}
+
+/** 縦横比を、設計で使われる比の名前に照らして説明する */
+function describeRatio(ratio: number): string {
+  const named: Array<[number, string]> = [
+    [1, '1:1'],
+    [PHI, '1:φ'],
+    [1 / PHI, 'φ:1'],
+    [Math.SQRT2, '1:√2'],
+    [1 / Math.SQRT2, '√2:1'],
+    [Math.sqrt(3), '1:√3'],
+    [2, '1:2'],
+    [0.5, '2:1'],
+    [3 / 2, '2:3'],
+  ]
+  for (const [value, label] of named) {
+    if (Math.abs(ratio - value) / value < 0.03) return `${label} (${ratio.toFixed(3)})`
+  }
+  return `${ratio.toFixed(3)} : 1`
 }
 
 /** 円の半径に寸法線とモジュール表記を添える */

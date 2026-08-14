@@ -102,6 +102,19 @@ export const wedgeSchema = z.object({
   pinned: z.boolean().optional(),
 })
 
+export const arcSchema = z.object({
+  kind: z.literal('arc'),
+  id,
+  cx: coord,
+  cy: coord,
+  r: size.describe('円弧の中心線の半径'),
+  w: size.describe('線の太さ（中心線をまたいで内外に w/2 ずつ）'),
+  a0: angle.describe('開始角（度）'),
+  a1: angle.describe('終了角（度）'),
+  cap: z.enum(['butt', 'round']).default('butt'),
+  pinned: z.boolean().optional(),
+})
+
 export const polySchema = z.object({
   kind: z.literal('poly'),
   id,
@@ -116,6 +129,7 @@ export const shapeSchema = z.discriminatedUnion('kind', [
   barSchema,
   rectSchema,
   wedgeSchema,
+  arcSchema,
   polySchema,
 ])
 
@@ -184,6 +198,7 @@ export type Ring = z.infer<typeof ringSchema>
 export type Bar = z.infer<typeof barSchema>
 export type Rect = z.infer<typeof rectSchema>
 export type Wedge = z.infer<typeof wedgeSchema>
+export type Arc = z.infer<typeof arcSchema>
 export type Poly = z.infer<typeof polySchema>
 export type Shape = z.infer<typeof shapeSchema>
 export type Constraint = z.infer<typeof constraintSchema>
@@ -193,10 +208,16 @@ export type Part = z.infer<typeof partSchema>
 export type LogoDesign = z.infer<typeof designSchema>
 
 /** 中心を持つシェイプ（制約ソルバーが動かせる対象） */
-export type Centered = Circle | Ring | Rect | Wedge
+export type Centered = Circle | Ring | Rect | Wedge | Arc
 
 export function hasCenter(s: Shape): s is Centered {
-  return s.kind === 'circle' || s.kind === 'ring' || s.kind === 'rect' || s.kind === 'wedge'
+  return (
+    s.kind === 'circle' ||
+    s.kind === 'ring' ||
+    s.kind === 'rect' ||
+    s.kind === 'wedge' ||
+    s.kind === 'arc'
+  )
 }
 
 /** 制約で使う「半径的な大きさ」。矩形は外接円相当を返す。 */
@@ -206,6 +227,8 @@ export function radiusOf(s: Centered): number {
     case 'ring':
     case 'wedge':
       return s.r
+    case 'arc':
+      return s.r + s.w / 2
     case 'rect':
       return Math.hypot(s.w, s.h) / 2
   }
