@@ -27,6 +27,7 @@ const results = await Promise.all(
       const o = await designLogo(brief, model, mode)
       writeFileSync(`tmp/run${i + 1}-logo.svg`, o.result.logoSvg)
       writeFileSync(`tmp/run${i + 1}-blueprint.svg`, o.result.blueprintSvg)
+      writeFileSync(`tmp/run${i + 1}-poster.svg`, o.result.posterSvg)
       return `#${i + 1} ${label}
      試行${o.attempts.length} / ${o.result.design.name} / shapes ${o.result.design.shapes.length} / 問題 ${o.attempts.at(-1)?.problems.length}`
     } catch (err) {
