@@ -38,9 +38,38 @@ export type DesignOutcome = {
 export const designPlanSchema = archetypeParamsSchema.extend({
   name: z.string().min(1).max(40),
   concept: z.string().min(1).max(600),
+  /**
+   * 主題を分解した要素を、重要な順に並べたもの。
+   *
+   * 要素を「図形として足す」と団子になる（部品方式で実際にそうなった）。
+   * 家紋は足していない。要素ごとに構造上の役割を割り当てている——
+   * 「丸に三つ盛桔梗」なら 桔梗＝主役の型 / 三つ盛＝反復 / 丸＝囲い。
+   * 順序を先に決めさせることで、この割り当てが後から効く。
+   */
+  elements: z
+    .union([z.array(z.union([z.string(), z.null()])), z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      const list = Array.isArray(v) ? v : typeof v === 'string' ? v.split(/[、,・]/) : []
+      return list
+        .map((e) => (typeof e === 'string' ? e.trim().slice(0, 24) : ''))
+        .filter(Boolean)
+        .slice(0, 4)
+    }),
 })
 
 export type DesignPlan = z.infer<typeof designPlanSchema>
+
+/** 要素と、それに割り当てた構造上の役割。 */
+function describeRoles(plan: DesignPlan): string {
+  const roles = [
+    `型 ${plan.archetype}`,
+    plan.repeat > 1 ? `${plan.repeat} つ盛` : null,
+    plan.enclosure === 'ring' ? '丸に' : plan.enclosure === 'double' ? '二重丸に' : null,
+    `${plan.ratio} 比`,
+  ].filter(Boolean)
+  return plan.elements.map((e, i) => `${e} → ${roles[i] ?? '性格'}`).join(' / ')
+}
 
 /**
  * 構成モード。
@@ -121,7 +150,15 @@ function specFor(brief: string, mode: DesignMode): ModeSpec {
     repair: (problems) => repairPrompt(brief, problems),
     build: (object) => {
       const plan = designPlanSchema.parse(object)
-      return buildFromArchetype({ name: plan.name, concept: plan.concept, params: plan })
+      return buildFromArchetype({
+        name: plan.name,
+        // 役割の割り当てを設計意図として残す。何をどう翻訳したかが
+        // 読めないと、直したいときにどこを触ればよいか分からない
+        concept: plan.elements.length
+          ? `${plan.concept}\n\n要素: ${describeRoles(plan)}`.slice(0, 600)
+          : plan.concept,
+        params: plan,
+      })
     },
   }
 }
