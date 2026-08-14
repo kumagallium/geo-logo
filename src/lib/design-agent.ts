@@ -75,7 +75,12 @@ function describeRoles(plan: DesignPlan): string {
   const roles = [
     `型 ${plan.archetype}`,
     plan.repeat > 1 ? `${plan.repeat} つ盛` : null,
-    plan.enclosure === 'ring' ? '丸に' : plan.enclosure === 'double' ? '二重丸に' : null,
+    plan.enclosure === 'none'
+      ? null
+      : { ring: '丸に', double: '二重丸に', hex: '亀甲に', square: '角に', diamond: '隅立て角に' }[
+          plan.enclosure
+        ],
+    plan.counter === 'slit' ? '抜け' : plan.counter === 'core' ? '覗き' : null,
     `${plan.ratio} 比`,
   ].filter(Boolean)
   return plan.elements.map((e, i) => `${e} → ${roles[i] ?? '性格'}`).join(' / ')

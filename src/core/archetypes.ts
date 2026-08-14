@@ -291,6 +291,25 @@ export const archetypeParamsSchema = z.object({
       return n === 3 || n === 4 ? n : 1
     })
     .describe('1 / 3（三つ盛）/ 4'),
+  /**
+   * 抜き。黒の塊を白で割る。
+   *
+   * 受け皿が型・反復・囲いの 3 つしかないと、コンセプトを何百字書かせても
+   * 形に効くのは 3 語だけになる。抜きは家紋にも陰紋・覗きとしてある語彙で、
+   * この道具で唯一「白が差し込まれて緩急が生まれた」と評価された操作。
+   */
+  counter: z
+    .union([z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      const k = typeof v === 'string' ? v.trim().toLowerCase().replace(/[\s_-]+/g, '') : ''
+      if (k === 'slit' || k === 'band' || k === '抜け' || k === '引き') return 'slit' as const
+      if (k === 'core' || k === 'eye' || k === 'hole' || k === '覗き' || k === '目') {
+        return 'core' as const
+      }
+      return 'none' as const
+    })
+    .describe('none / slit（横に走る抜け）/ core（中心の覗き）'),
 })
 
 export type ArchetypeParams = z.infer<typeof archetypeParamsSchema>
@@ -813,6 +832,37 @@ function polygon(n: number, r: number, turn: number): Array<{ x: number; y: numb
   })
 }
 
+/**
+ * 抜いた結果、形が痩せすぎていないか。
+ *
+ * パーツが消えるほどでなくても、塗りが減りすぎると小さいサイズで読めない。
+ * 抜きは形を読ませるためのもので、形を無くすためのものではない。
+ */
+function isEmptied(shapes: Shape[], parts: LogoDesign['parts'], floor: number): boolean {
+  try {
+    const built = build(
+      normalize({
+        name: 'probe',
+        concept: '',
+        module: 64,
+        grid: 'golden',
+        palette: { primary: '#000', secondary: '#000', accent: '#000', background: '#fff' },
+        shapes,
+        constraints: [],
+        groups: [],
+        parts,
+      }).design,
+    )
+    return (
+      built.parts.length < parts.length ||
+      built.parts.some((p) => !p.pathData) ||
+      built.inkRatio < floor
+    )
+  } catch {
+    return true
+  }
+}
+
 /** 制約の参照先にコピーの印を付ける。 */
 function retagConstraint(c: Constraint, tag: string): Constraint {
   const t = (ref: string) => `${ref}${tag}`
@@ -896,6 +946,37 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
       })
     }
   })
+
+  // 抜き。黒の塊を白で割って緩急を出す。囲いより先に入れる（囲いは
+  // 割らない。輪まで切ると紋が二つに分かれて読めなくなる）
+  if (params.counter !== 'none' && parts.length > 0) {
+    const reach = extentOf(shapes)
+    const cut: Shape =
+      params.counter === 'slit'
+        ? {
+            kind: 'rect',
+            id: 'cut',
+            cx: 0,
+            cy: round(-reach * 0.18),
+            w: round(reach * 2.4),
+            h: round(reach * 0.16),
+          }
+        : { kind: 'circle', id: 'cut', cx: 0, cy: 0, r: round(reach * 0.26) }
+
+    const carved: LogoDesign['parts'] = parts.map((pt) => ({
+      ...pt,
+      steps: [...pt.steps, { op: 'sub' as const, ref: 'cut' }],
+    }))
+    // 割った結果が消えるなら入れない。抜きは形を読ませるためのもので、
+    // 形を無くすためのものではない
+    // 囲いはこの後に付く。付くと外接矩形が広がって塗りの比率が下がるので、
+    // 囲うつもりなら余裕を見ておかないと、抜いた後に痩せすぎと判定される
+    const floor = params.enclosure === 'none' ? 0.16 : 0.34
+    if (!isEmptied([...shapes, cut], carved, floor)) {
+      shapes = [...shapes, cut]
+      parts.splice(0, parts.length, ...carved)
+    }
+  }
 
   // 囲い。家紋の基本構造は「丸に◯◯」で、モチーフ単体では紋にならない
   if (params.enclosure !== 'none') {
