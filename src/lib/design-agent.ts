@@ -83,7 +83,11 @@ function describeRoles(plan: DesignPlan): string {
  * 候補を並行生成しているので、両方を混ぜて人に選ばせるほうが安く確実。
  */
 export type DesignMode =
-  | { kind: 'archetype'; family?: (typeof ARCHETYPE_FAMILIES)[number] }
+  | {
+      kind: 'archetype'
+      family?: (typeof ARCHETYPE_FAMILIES)[number]
+      structure?: (typeof STRUCTURES)[number]
+    }
   | { kind: 'composition'; angle?: string }
 
 /**
@@ -117,6 +121,10 @@ export function modeForVariant(index: number): DesignMode {
     return {
       kind: 'archetype',
       family: ARCHETYPE_FAMILIES[(i / 2) % ARCHETYPE_FAMILIES.length],
+      // 系統だけ振り分けても、囲いと反復は主題から決まるので全案が同じ輪に
+      // なる（防御が主題だと毎回 ring が選ばれ、4 案とも丸になった）。
+      // 構造も案ごとに変える。
+      structure: STRUCTURES[(i / 2) % STRUCTURES.length],
     }
   }
   return {
@@ -124,6 +132,19 @@ export function modeForVariant(index: number): DesignMode {
     angle: COMPOSITION_ANGLES[((i - 1) / 2) % COMPOSITION_ANGLES.length],
   }
 }
+
+/**
+ * 案ごとの構造。囲いと反復の有無を振り分ける。
+ *
+ * 主題から決めさせると全案が同じ構造になる。デザイナーが案を出すときに
+ * 「別の方向から 1 案ずつ」出すのと同じで、構造は意図的に散らす。
+ */
+export const STRUCTURES = [
+  { name: '素のまま', rule: 'enclosure は "none"、repeat は 1。型そのものの力で見せる' },
+  { name: '囲う', rule: 'enclosure は "ring" / "hex"（亀甲）/ "diamond"（隅立て角）から主題に合うものを選ぶ。repeat は 1' },
+  { name: '反復', rule: 'repeat は 3 か 4。enclosure は "none"' },
+  { name: '囲って反復', rule: 'repeat は 3、enclosure は "ring" / "double" / "hex" / "diamond" から選ぶ' },
+] as const
 
 type ModeSpec = {
   schema: z.ZodType
@@ -146,7 +167,7 @@ function specFor(brief: string, mode: DesignMode): ModeSpec {
   return {
     schema: designPlanSchema,
     system: systemPrompt(mode.family?.members),
-    user: userPrompt(brief, mode.family?.name),
+    user: userPrompt(brief, mode.family?.name, mode.structure),
     repair: (problems) => repairPrompt(brief, problems),
     build: (object) => {
       const plan = designPlanSchema.parse(object)

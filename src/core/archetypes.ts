@@ -211,9 +211,11 @@ export const archetypeParamsSchema = z.object({
     .optional()
     .transform((v) => {
       const k = typeof v === 'string' ? v.trim().toLowerCase() : ''
-      return k === 'ring' || k === 'double' ? (k as 'ring' | 'double') : ('none' as const)
+      return k === 'ring' || k === 'double' || k === 'hex' || k === 'diamond'
+        ? (k as 'ring' | 'double' | 'hex' | 'diamond')
+        : ('none' as const)
     })
-    .describe('none / ring（丸に）/ double（二重丸に）'),
+    .describe('none / ring（丸に）/ double（二重丸に）/ hex（亀甲に）/ diamond（隅立て角に）'),
   /**
    * モチーフの反復数。三つ盛・三つ寄せのように、同じ形を等配置すると
    * 律動が生まれて紋になる。1 なら反復しない。
@@ -740,6 +742,14 @@ function isDisjoint(placed: {
   }
 }
 
+/** 正 n 角形の頂点。輪と違って向きがあるので、上を頂点に取る。 */
+function polygon(n: number, r: number, turn: number): Array<{ x: number; y: number }> {
+  return Array.from({ length: n }, (_, i) => {
+    const a = -Math.PI / 2 + turn + (i * 2 * Math.PI) / n
+    return { x: round(Math.cos(a) * r), y: round(Math.sin(a) * r) }
+  })
+}
+
 /** 制約の参照先にコピーの印を付ける。 */
 function retagConstraint(c: Constraint, tag: string): Constraint {
   const t = (ref: string) => `${ref}${tag}`
@@ -838,7 +848,16 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
     const gap = params.enclosure === 'double' ? w * 2.9 : w * 1.4
     const outer = round(extent + gap)
 
-    const rings: Shape[] = [{ kind: 'ring', id: 'encl', cx: 0, cy: 0, r: outer, w }]
+    // 丸だけだと、どの主題でも同じ輪になって案が並ばない。家紋にも
+    // 亀甲・隅立て角があり、囲いの形そのものが性格を持つ
+    const poly = params.enclosure === 'hex' ? 6 : params.enclosure === 'diamond' ? 4 : 0
+    const rings: Shape[] =
+      poly === 0
+        ? [{ kind: 'ring', id: 'encl', cx: 0, cy: 0, r: outer, w }]
+        : [
+            { kind: 'poly', id: 'encl', points: polygon(poly, round(outer + w / 2), 0) },
+            { kind: 'poly', id: 'enclHole', points: polygon(poly, round(outer - w / 2), 0) },
+          ]
     // 内側は細く。同じ太さで二本引くと重く、輪の内外が読めなくなる。
     // 輪がモチーフに寄っているときは二本目が入らないので、そのときは引かない
     const innerR = round(outer - w * 1.9)
@@ -847,10 +866,13 @@ export function buildFromArchetype(plan: ArchetypePlan): LogoDesign {
       rings.push({ kind: 'ring', id: 'encl2', cx: 0, cy: 0, r: innerR, w: innerW })
     }
     shapes = [...shapes, ...rings]
-    if (rings.length > 1) constraints.push({ type: 'concentric', a: 'encl2', b: 'encl' })
+    // 多角形の囲いも 2 つのシェイプになるので、本数では判定できない
+    if (rings.some((r) => r.id === 'encl2')) {
+      constraints.push({ type: 'concentric', a: 'encl2', b: 'encl' })
+    }
     parts.push({
       id: 'enclosure',
-      steps: rings.map((r) => ({ op: 'add' as const, ref: r.id })),
+      steps: rings.map((r) => ({ op: r.id === 'enclHole' ? ('sub' as const) : ('add' as const), ref: r.id })),
       fill: 'primary',
       mirror: 'none',
     })

@@ -60,10 +60,13 @@ const SYSTEM_PROMPT_TEMPLATE = `あなたは幾何構成に習熟したロゴデ
 あるいはその両方を持っています（「丸に三つ葉」「二重丸に三つ巴」）。
 素の 2 図形で終わったものは、図形ではあってもマークには見えません。
 
-- 主題が **1 つの強い概念**（盾・守り・拠点・組織）なら enclosure を "ring" か "double"
-- 主題に **多様性・広がり・協働・循環**があるなら repeat を 3 か 4
-- 両方あるなら両方使う（最も紋らしくなる）
-- モチーフ自体が既に複雑なとき（rosette、concentric-arcs）だけ両方 "none" / 1 でよい
+囲いは丸だけではありません。**ring**（丸に）/ **double**（二重丸に）/
+**hex**（亀甲に）/ **diamond**（隅立て角に）があり、囲いの形そのものが性格を
+持ちます。丸＝包容・完全、亀甲＝堅牢・持続、隅立て角＝鋭さ・格式。
+主題に合わせて選んでください。丸を既定にしないこと。
+
+この案の構造（囲うか、反復するか）は指示があればそれに従ってください。
+指示がなければ主題から決めてかまいません。
 
 ## 進め方 — 要素を足すのではなく、役割を割り当てる
 1. まず **concept** を書く。要件から、そのブランドが何であるか・何を約束するかを
@@ -112,14 +115,20 @@ JSON のみ。コードブロックや説明文は不要です。`
 /** 型を絞り込まない既定のシステムプロンプト */
 export const SYSTEM_PROMPT = systemPrompt()
 
-export function userPrompt(brief: string, family?: string): string {
+export function userPrompt(
+  brief: string,
+  family?: string,
+  structure?: { name: string; rule: string },
+): string {
   const scope = family
     ? `\nこの案は「${family}」の系統で考えてください。上の一覧はその系統に絞ってあります。`
     : ''
+  // 構造は案ごとに指定する。主題から決めさせると全案が同じ囲いになる
+  const shape = structure ? `\nこの案の構造は「${structure.name}」です: ${structure.rule}` : ''
   return `次の要件でロゴを設計してください。
 
 要件: ${brief}
-${scope}
+${scope}${shape}
 主題を概念へ還元し、最も近い構成型を選んでください。`
 }
 
