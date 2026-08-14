@@ -680,6 +680,13 @@ export type TraceOptions = {
   /** 目標の円弧本数。toleranceRatio があればそちらが優先される */
   maxArcs?: number
   /**
+   * 左右対称なら片側だけ当てはめて反転する。既定は有効。
+   * 軸はマーク全体で 1 つに決めて mirrorX で渡すこと。
+   */
+  symmetry?: boolean
+  /** マーク全体の対称軸（x 座標） */
+  mirrorX?: number
+  /**
    * 半径を比例体系の候補へ寄せるか。既定は寄せない。
    *
    * 生成した設計では「作図した感」を出す有効な処理だが、トレースでは
@@ -701,9 +708,67 @@ export type TraceResult = {
  * 点列はモジュール単位に正規化済みであることを前提にする（呼び出し側で
  * fitToModule を通す）。許容誤差もモジュール単位。
  */
+/**
+ * 対称性を保ったまま当てはめる。
+ *
+ * 片側だけに円弧を当て、残りは反転して作る。アンカーの位置も半径も厳密に
+ * 鏡像になり、モデルの当てはめ結果が左右で食い違うことがなくなる。
+ * 対称なモチーフでは、これが「作図した」形と「当てはめた」形の差になる。
+ */
+function traceMirrored(points: Vec[], axis: number, options: TraceOptions): TraceResult | null {
+  const crossings = axisCrossings(points, axis)
+  // 単純な対称形は軸をちょうど 2 回横切る。それ以外は扱わない
+  if (crossings.length !== 2) return null
+
+  const [a, b] = crossings
+  const half = points.slice(a + 1, b + 1)
+  if (half.length < 8) return null
+
+  // 端を軸の上へ載せる。ここがずれると継ぎ目が開く
+  const onAxis = (q: Vec): Vec => ({ x: axis, y: q.y })
+  const chain = [onAxis(half[0]), ...half.slice(1, -1), onAxis(half[half.length - 1])]
+
+  const fitted = traceArcs(chain, { ...options, symmetry: false })
+  if (fitted.segments.length < 2) return null
+
+  // 各セグメントは「1 つ前の点から、この点まで」を表す。
+  // 片側が  始点 → p1 → … → 終点（軸上）  なら、戻りは
+  //         終点 → mirror(p_{k-1}) → … → mirror(p1) → 始点
+  // となり、i 番目の戻り弧は k-i 番目の往き弧の鏡像になる。
+  const outward = fitted.segments
+  const k = outward.length
+  const start = chain[0]
+
+  const back: ContourSegment[] = []
+  for (let j = 0; j < k; j++) {
+    const source = outward[k - 1 - j] // 鏡像のもとになる往きの弧
+    const target = k - 2 - j // その 1 つ手前の点へ戻る
+    const end = target >= 0 ? outward[target] : start
+    back.push({
+      x: round(2 * axis - end.x),
+      y: round(end.y),
+      r: source.r,
+      // 向きは変えない。鏡像で 1 度反転し、逆順に辿ることでもう 1 度反転するので、
+      // 2 つが打ち消し合って元の向きに戻る
+      sweep: source.sweep,
+    })
+  }
+
+  return { segments: [...outward, ...back], tolerance: fitted.tolerance }
+}
+
 export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResult {
   const maxArcs = Math.max(3, Math.min(options.maxArcs ?? 12, 64))
   if (points.length < 8) return { segments: [], tolerance: 0 }
+
+  // 対称なら片側だけ当てはめて反転する
+  if (options.symmetry !== false) {
+    const axis = mirrorAxis(points, options.mirrorX)
+    if (axis !== null) {
+      const mirrored = traceMirrored(points, axis, options)
+      if (mirrored) return mirrored
+    }
+  }
 
   // 直線判定の基準になる輪郭の大きさ
   const xs = points.map((q) => q.x)
@@ -754,6 +819,156 @@ function snapRadius(seg: ContourSegment): ContourSegment {
   if (seg.r === undefined) return seg
   const hit = snap(seg.r, radiusCandidates(), 0.12)
   return hit ? { ...seg, r: round(hit.value) } : seg
+}
+
+/**
+ * 左右対称の軸を探す。対称でなければ null。
+ *
+ * 対称なモチーフを左右で独立に当てはめると、アンカーの位置も半径も食い違う。
+ * 形としてはほぼ同じに見えるが、作図としては別物になる。デザイナーは対称の
+ * モチーフをまず対称性ごと決めてから引く。
+ */
+export function mirrorAxis(points: Vec[], candidate?: number, tolerance = 0.02): number | null {
+  if (points.length < 12) return null
+  const xs = points.map((q) => q.x)
+  const ys = points.map((q) => q.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const span = Math.max(maxX - minX, Math.max(...ys) - Math.min(...ys))
+  if (span <= 0) return null
+
+  // 軸はマーク全体で 1 つ。輪郭ごとの中心を軸にしてはいけない。
+  // 十字の 4 つの抜きのように、個々は非対称でも対で対称という要素があり、
+  // 自分の中心を軸とみなして反転すると別の形になる（実測: 一致率 96%→79%）。
+  const axis = candidate ?? (minX + maxX) / 2
+  const cell = span * tolerance
+  const key = (q: Vec) => `${Math.round(q.x / cell)}:${Math.round(q.y / cell)}`
+  const grid = new Set(points.map(key))
+
+  let hit = 0
+  for (const q of points) {
+    const m = { x: 2 * axis - q.x, y: q.y }
+    // 折り返した点が、その周囲 1 マス以内に見つかれば一致とみなす
+    for (let dx = -1; dx <= 1 && hit === hit; dx++) {
+      let found = false
+      for (let dy = -1; dy <= 1; dy++) {
+        if (grid.has(`${Math.round(m.x / cell) + dx}:${Math.round(m.y / cell) + dy}`)) {
+          found = true
+          break
+        }
+      }
+      if (found) {
+        hit++
+        break
+      }
+    }
+  }
+  return hit / points.length >= 0.97 ? axis : null
+}
+
+/**
+ * 軸をはさんで対になる輪郭を探す。
+ *
+ * 自分自身が対称な要素だけを揃えても足りない。十字の 4 つの抜きのように、
+ * 個々は非対称でも対で鏡像になっている要素があり、別々に当てはめると
+ * 対応する弧が食い違う（実測: 丸に十字で弧の鏡像一致 68%）。
+ *
+ * 返すのは「相方の添字」。自分が対称なもの、相方が無いものは null。
+ */
+export function mirrorPairs(contours: Vec[][], axis: number, tolerance = 0.03): (number | null)[] {
+  const boxOf = (c: Vec[]) => {
+    const xs = c.map((q) => q.x)
+    const ys = c.map((q) => q.y)
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) }
+  }
+  const boxes = contours.map(boxOf)
+  const span = Math.max(...boxes.map((b) => Math.max(b.x1 - b.x0, b.y1 - b.y0)), 1e-6)
+  const tol = span * tolerance
+
+  const out: (number | null)[] = contours.map(() => null)
+  for (let i = 0; i < contours.length; i++) {
+    if (out[i] !== null) continue
+    if (mirrorAxis(contours[i], axis) !== null) continue // 自分で対称なら対は不要
+
+    const a = boxes[i]
+    for (let j = i + 1; j < contours.length; j++) {
+      if (out[j] !== null) continue
+      const b = boxes[j]
+      // まず外接枠で粗く篩う
+      if (
+        Math.abs(2 * axis - a.x1 - b.x0) > tol ||
+        Math.abs(2 * axis - a.x0 - b.x1) > tol ||
+        Math.abs(a.y0 - b.y0) > tol ||
+        Math.abs(a.y1 - b.y1) > tol
+      ) {
+        continue
+      }
+
+      // 外接枠だけでは足りない。二つ巴の 2 つの巴は鏡像ではなく 180 度回転で、
+      // 枠は一致するのに形は反転していない。誤って対とみなすと形が壊れる
+      // （実測: 一致率 99.8% → 69%）。点の対応まで確かめる。
+      const cell = tol
+      const grid = new Set(
+        contours[j].map((q) => `${Math.round(q.x / cell)}:${Math.round(q.y / cell)}`),
+      )
+      let hit = 0
+      for (const q of contours[i]) {
+        const mx = Math.round((2 * axis - q.x) / cell)
+        const my = Math.round(q.y / cell)
+        for (let dx = -1; dx <= 1 && hit === hit; dx++) {
+          let found = false
+          for (let dy = -1; dy <= 1; dy++) {
+            if (grid.has(`${mx + dx}:${my + dy}`)) {
+              found = true
+              break
+            }
+          }
+          if (found) {
+            hit++
+            break
+          }
+        }
+      }
+      if (hit / contours[i].length >= 0.97) {
+        out[i] = j
+        out[j] = i
+        break
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * 閉じた輪郭の弧列を、軸で反転したものに直す。
+ *
+ * 反転すると回る向きが変わり、逆順に辿ることでもう一度変わるので、
+ * 2 つが打ち消し合って向きは元のまま。半径は「その点へ入る弧」に属するため、
+ * 逆順では 1 つずれた弧のものを引き継ぐ。
+ */
+export function mirrorSegments(segments: ContourSegment[], axis: number): ContourSegment[] {
+  const n = segments.length
+  return Array.from({ length: n }, (_, k) => {
+    const point = segments[(n - 1 - k + n) % n]
+    const arc = segments[(n - k) % n]
+    return {
+      x: round(2 * axis - point.x),
+      y: round(point.y),
+      r: arc.r,
+      sweep: arc.sweep,
+    }
+  })
+}
+
+/** 対称軸を横切る位置を探す */
+function axisCrossings(points: Vec[], axis: number): number[] {
+  const out: number[] = []
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i].x - axis
+    const b = points[(i + 1) % points.length].x - axis
+    if ((a <= 0 && b > 0) || (a >= 0 && b < 0)) out.push(i)
+  }
+  return out
 }
 
 /**

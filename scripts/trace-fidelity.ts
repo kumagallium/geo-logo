@@ -12,12 +12,15 @@ import {
   allocateArcs,
   detectCircle,
   fitToModule,
+  mirrorPairs,
+  mirrorSegments,
   nestingDepth,
   sampleContoursFromSvg,
   traceArcs,
 } from '../src/core/trace.js'
 import { compile } from '../src/core/index.js'
 import type { Shape, Step } from '../src/core/index.js'
+import type { ContourSegment } from '../src/core/trace.js'
 
 const [file, arcs = '28', tol] = process.argv.slice(2)
 // 第 3 引数を渡すと、本数ではなく精度（輪郭の大きさに対する比）で決める
@@ -31,8 +34,15 @@ if (contours.length === 0) {
   process.exit(1)
 }
 
+// 対称軸はマーク全体で 1 つに決める
+const every = contours.flat()
+const markAxis = (Math.min(...every.map((q) => q.x)) + Math.max(...every.map((q) => q.x))) / 2
+
+const pairs = mirrorPairs(contours, markAxis)
 const quota = allocateArcs(contours, Number(arcs))
 const depth = nestingDepth(contours)
+/** 当てはめ済みの弧列。対の相方を反転して作るために持っておく */
+const done = new Map<number, ContourSegment[]>()
 const shapes: Shape[] = []
 const steps: Step[] = []
 contours.forEach((points, i) => {
@@ -43,7 +53,14 @@ contours.forEach((points, i) => {
     steps.push({ op, ref: `c${i}` })
     return
   }
-  const { segments } = traceArcs(points, tolerance ? { toleranceRatio: tolerance } : { maxArcs: quota[i] })
+  // 対で鏡像になっている相方は、当てはめ直さず反転して作る。
+  // 別々に当てはめると対応する弧が食い違い、作図として体系に載らない
+  const twin = pairs[i]
+  const segments =
+    twin !== null && twin < i && done.has(twin)
+      ? mirrorSegments(done.get(twin) as ContourSegment[], markAxis)
+      : traceArcs(points, tolerance ? { toleranceRatio: tolerance, mirrorX: markAxis } : { maxArcs: quota[i], mirrorX: markAxis }).segments
+  done.set(i, segments)
   if (segments.length < 3) return
   shapes.push({ kind: 'contour', id: `c${i}`, segments })
   steps.push({ op, ref: `c${i}` })

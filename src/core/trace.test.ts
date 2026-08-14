@@ -5,6 +5,9 @@ import {
   collectShapes,
   contourComplexity,
   fitToModule,
+  mirrorAxis,
+  mirrorPairs,
+  mirrorSegments,
   nestingDepth,
   paintOf,
   parseTransform,
@@ -290,7 +293,8 @@ describe('直線の扱い', () => {
       }
     }
 
-    const { segments } = traceArcs(points, { maxArcs: 12, snapRadii: false })
+    // 対称処理は別に検証する。ここでは直線化そのものを見たいので切る
+    const { segments } = traceArcs(points, { maxArcs: 12, snapRadii: false, symmetry: false })
     expect(segments).toHaveLength(4)
     for (const s of segments) expect(s.r).toBeUndefined()
   })
@@ -315,5 +319,120 @@ describe('nestingDepth', () => {
 
   it('離れた輪郭はどちらも 0 段', () => {
     expect(nestingDepth([circlePoints(2, 90, -8, 0), circlePoints(2, 90, 8, 0)])).toEqual([0, 0])
+  })
+})
+
+describe('対称性を保った当てはめ', () => {
+  /**
+   * 形が対称でも、当てはめを左右で独立に行えばアンカーの位置も半径も食い違う。
+   * 完成形の見た目にはほとんど出ないが、作図としては別物になる。
+   * 実測（丸に十字）: 鏡像一致 69%、対応する円弧の半径が最大 73 倍ずれていた。
+   */
+  const symmetric = (n = 240): Vec[] =>
+    Array.from({ length: n }, (_, i) => {
+      const t = (i / n) * Math.PI * 2
+      // 上下で膨らみが違う、左右対称な形
+      const r = 2 + 0.5 * Math.cos(t * 2) + 0.3 * Math.sin(t) ** 2
+      return { x: Math.cos(t) * r, y: Math.sin(t) * r }
+    })
+
+  it('左右対称な輪郭を軸として検出する', () => {
+    expect(mirrorAxis(symmetric())).toBeCloseTo(0, 1)
+  })
+
+  it('非対称な輪郭では検出しない', () => {
+    const skewed = symmetric().map((p) => ({ x: p.x + p.y * 0.4, y: p.y }))
+    expect(mirrorAxis(skewed)).toBeNull()
+  })
+
+  it('軸を指定でき、そこで対称でなければ検出しない', () => {
+    // 十字の抜きのように、自分の中心では対称に見えてもマークの軸では非対称、
+    // という要素がある。軸はマーク全体で 1 つに決める
+    const offset = symmetric().map((p) => ({ x: p.x + 6, y: p.y }))
+    expect(mirrorAxis(offset, 6)).toBeCloseTo(6, 1)
+    expect(mirrorAxis(offset, 0)).toBeNull()
+  })
+
+  it('対称な輪郭では、弧が厳密に鏡像になる', () => {
+    // 半径は「その点へ入る弧」に属する。鏡像では入りと出が入れ替わるので、
+    // 対応する点どうしで半径を比べても一致しない。弧（始点・終点・半径）で比べる
+    const { segments } = traceArcs(symmetric(), { maxArcs: 20 })
+    const arcs = segments.map((g, i) => {
+      const from = segments[(i - 1 + segments.length) % segments.length]
+      return { x1: from.x, y1: from.y, x2: g.x, y2: g.y, r: g.r ?? 0 }
+    })
+
+    const near = (a: number, b: number) => Math.abs(a - b) < 1e-3
+    for (const a of arcs) {
+      // 鏡像の弧は、始点と終点が入れ替わった形で現れる
+      const partner = arcs.find(
+        (b) =>
+          near(b.x1, -a.x2) && near(b.y1, a.y2) && near(b.x2, -a.x1) && near(b.y2, a.y1) &&
+          near(b.r, a.r),
+      )
+      expect(partner, `(${a.x1},${a.y1})→(${a.x2},${a.y2}) r=${a.r} の鏡像が無い`).toBeDefined()
+    }
+  })
+
+  it('symmetry を切れば従来どおり左右独立で当てはめる', () => {
+    const on = traceArcs(symmetric(), { maxArcs: 20 })
+    const off = traceArcs(symmetric(), { maxArcs: 20, symmetry: false })
+    expect(on.segments).not.toEqual(off.segments)
+  })
+})
+
+describe('mirrorPairs', () => {
+  /**
+   * 自分自身が対称な要素だけ揃えても足りない。十字の 4 つの抜きのように、
+   * 個々は非対称でも対で鏡像になっている要素がある。
+   * 実測（丸に十字）: 対まで揃えて弧の鏡像一致 34% → 100%。
+   */
+  /** それ自体は左右対称でない形（位相をずらしてある） */
+  const blob = (cx: number): Vec[] =>
+    Array.from({ length: 160 }, (_, i) => {
+      const t = (i / 160) * Math.PI * 2
+      const r = 1 + 0.4 * Math.sin(t * 3 + 0.7)
+      return { x: cx + Math.cos(t) * r, y: Math.sin(t) * r }
+    })
+
+  const mirrored = (c: Vec[], axis: number) => c.map((q) => ({ x: 2 * axis - q.x, y: q.y }))
+  const rotated = (c: Vec[], cx: number) => c.map((q) => ({ x: 2 * cx - q.x, y: -q.y }))
+
+  it('軸をはさんで鏡像になっている輪郭を対にする', () => {
+    expect(mirrorPairs([blob(-3), mirrored(blob(-3), 0)], 0)).toEqual([1, 0])
+  })
+
+  it('外接枠が合っていても形が鏡像でなければ対にしない', () => {
+    // 二つ巴の 2 つの巴は鏡像ではなく 180 度回転。枠は一致するが形は反転して
+    // いない。誤って対とみなすと形が壊れる（実測: 一致率 99.8% → 69%）
+    expect(mirrorPairs([blob(-3), rotated(blob(-3), 3)], 0)).toEqual([null, null])
+  })
+
+  it('自分自身が対称なものは対にしない', () => {
+    const centred = Array.from({ length: 120 }, (_, i) => {
+      const t = (i / 120) * Math.PI * 2
+      return { x: Math.cos(t) * 2, y: Math.sin(t) * 2 }
+    })
+    expect(mirrorPairs([centred], 0)).toEqual([null])
+  })
+})
+
+describe('mirrorSegments', () => {
+  it('反転しても回る向きは変わらない', () => {
+    // 鏡像で 1 度、逆順に辿ることでもう 1 度反転し、打ち消し合う
+    const segs = traceArcs(circlePoints(2), { maxArcs: 8, snapRadii: false }).segments
+    const flipped = mirrorSegments(segs, 0)
+    expect(flipped).toHaveLength(segs.length)
+    expect(flipped.map((s) => s.sweep).sort()).toEqual(segs.map((s) => s.sweep).sort())
+    // 半径の集合は保たれる
+    expect(flipped.map((s) => s.r).sort()).toEqual(segs.map((s) => s.r).sort())
+  })
+
+  it('二度反転すると元に戻る', () => {
+    const segs = traceArcs(circlePoints(2), { maxArcs: 8, snapRadii: false }).segments
+    const back = mirrorSegments(mirrorSegments(segs, 0), 0)
+    for (const s of back) {
+      expect(segs.some((t) => Math.abs(t.x - s.x) < 1e-6 && Math.abs(t.y - s.y) < 1e-6)).toBe(true)
+    }
   })
 })

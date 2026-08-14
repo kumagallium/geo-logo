@@ -7,17 +7,22 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import type { Shape, Step } from '../src/core/index.js'
+import type { ContourSegment } from '../src/core/trace.js'
 import { compile } from '../src/core/index.js'
 import {
   allocateArcs,
   detectCircle,
   fitToModule,
+  mirrorPairs,
+  mirrorSegments,
   nestingDepth,
   sampleContoursFromSvg,
   traceArcs,
 } from '../src/core/trace.js'
 
-const [file, out = 'trace', arcs = '12'] = process.argv.slice(2)
+const [file, out = 'trace', arcs = '12', tol] = process.argv.slice(2)
+// 第 4 引数を渡すと、本数ではなく精度（輪郭の大きさに対する比）で決める
+const tolerance = tol ? Number(tol) : 0
 const svg = readFileSync(file, 'utf8')
 
 const traced = sampleContoursFromSvg(svg)
@@ -31,6 +36,8 @@ if (contours.length === 0) {
   process.exit(1)
 }
 
+/** 当てはめ済みの弧列。対の相方を反転して作るために持っておく */
+const done = new Map<number, ContourSegment[]>()
 const shapes: Shape[] = []
 const steps: Step[] = []
 const budget = Number(arcs)
@@ -51,7 +58,14 @@ contours.forEach((points, i) => {
     return
   }
 
-  const { segments } = traceArcs(points, tolerance ? { toleranceRatio: tolerance } : { maxArcs: quota[i] })
+  // 対で鏡像になっている相方は、当てはめ直さず反転して作る。
+  // 別々に当てはめると対応する弧が食い違い、作図として体系に載らない
+  const twin = pairs[i]
+  const segments =
+    twin !== null && twin < i && done.has(twin)
+      ? mirrorSegments(done.get(twin) as ContourSegment[], markAxis)
+      : traceArcs(points, tolerance ? { toleranceRatio: tolerance, mirrorX: markAxis } : { maxArcs: quota[i], mirrorX: markAxis }).segments
+  done.set(i, segments)
   if (segments.length < 3) return
   shapes.push({ kind: 'contour', id, segments })
   steps.push({ op, ref: id })
