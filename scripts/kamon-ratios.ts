@@ -11,11 +11,17 @@
 import { readFileSync } from 'node:fs'
 import { sampleContoursFromSvg, traceArcs } from '../src/core/trace.js'
 
-const files = ['g1', 'g2', 'g3', 'g4', 'g5', 'g6']
+import { existsSync, readdirSync } from 'node:fs'
+
+// data/kamon が用意されていればそちらを使う（scripts/fetch-kamon.ts で取得）
+const DIR = existsSync('data/kamon') ? 'data/kamon' : 'tmp'
+const files = existsSync('data/kamon')
+  ? readdirSync(DIR).filter((f) => f.endsWith('.svg')).map((f) => f.replace(/\.svg$/, ''))
+  : ['g1', 'g2', 'g3', 'g4', 'g5', 'g6']
 const all: number[] = []
 
 for (const f of files) {
-  const svg = readFileSync(`tmp/${f}.svg`, 'utf8')
+  const svg = readFileSync(`${DIR}/${f}.svg`, 'utf8')
   const traced = sampleContoursFromSvg(svg, 240)
   if (!traced?.length) { console.log(`${f}: 輪郭なし`); continue }
   const contours = traced.map((t) => t.points)

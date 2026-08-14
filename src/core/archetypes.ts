@@ -237,10 +237,18 @@ export const archetypeParamsSchema = z.object({
       }
       return resolved
     }),
+  /**
+   * 比例体系。既定は白銀比。
+   *
+   * 家紋 39 点の半径を外接半径で正規化して数え上げると、繰り返し現れる値は
+   * 0.99 / 0.70 / 0.47 / 0.34 / 0.24 / 0.18 / 0.13 / 0.09 で、隣り合う比は
+   * ほぼ 1.41 だった（scripts/kamon-ratios.ts）。φ ではなく √2 の梯子。
+   * 黄金比を既定にしていたのはこちらの思い込みで、実測に反していた。
+   */
   ratio: z
     .enum(RATIOS)
-    .default('golden')
-    .describe('比例体系。golden=黄金比φ（有機的・力強い）/ silver=白銀比√2（静か・端正）/ integer=整数比（素朴・明快）'),
+    .default('silver')
+    .describe('比例体系。silver=白銀比√2（家紋の実測がこれ。静か・端正）/ golden=黄金比φ（有機的・力強い）/ integer=整数比（素朴・明快）'),
   weight: z
     .enum(WEIGHTS)
     .default('regular')
