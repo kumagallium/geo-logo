@@ -6,6 +6,7 @@ import {
   buildFromArchetype,
 } from '../core/archetypes'
 import { buildFromComposition, compositionSchema } from '../core/composition'
+import { buildFromOutline, outlineSchema } from '../core/outline'
 import { compile, type CompileResult, type LogoDesign } from '../core/index'
 import { CodedError } from './ai-error-codes'
 import {
@@ -13,7 +14,14 @@ import {
   compositionRepairPrompt,
   compositionUserPrompt,
 } from './composition-prompt'
-import { repairPrompt, systemPrompt, userPrompt } from './design-prompt'
+import {
+  OUTLINE_SYSTEM_PROMPT,
+  outlineRepairPrompt,
+  outlineUserPrompt,
+  repairPrompt,
+  systemPrompt,
+  userPrompt,
+} from './design-prompt'
 
 /** 部品方式の計画。幾何は core/composition.ts が組み立てる。 */
 export const compositionPlanSchema = compositionSchema
@@ -89,6 +97,7 @@ export type DesignMode =
       structure?: (typeof STRUCTURES)[number]
     }
   | { kind: 'composition'; angle?: string }
+  | { kind: 'outline' }
 
 /**
  * 部品方式で候補を分けるための視点。デザイナーが案を出すときの切り口。
@@ -127,6 +136,9 @@ export function modeForVariant(index: number): DesignMode {
       structure: STRUCTURES[(i / 2) % STRUCTURES.length],
     }
   }
+  // 部品方式は円を詰めるので、どんな題材も丸い団子になる。3 案に 1 案は
+  // 輪郭の通過点から作図させて、具象の輪郭が出る道を残す。
+  if (i % 3 === 1) return { kind: 'outline' }
   return {
     kind: 'composition',
     angle: COMPOSITION_ANGLES[((i - 1) / 2) % COMPOSITION_ANGLES.length],
@@ -155,6 +167,15 @@ type ModeSpec = {
 }
 
 function specFor(brief: string, mode: DesignMode): ModeSpec {
+  if (mode.kind === 'outline') {
+    return {
+      schema: outlineSchema,
+      system: OUTLINE_SYSTEM_PROMPT,
+      user: outlineUserPrompt(brief),
+      repair: (problems) => outlineRepairPrompt(brief, problems),
+      build: (object) => buildFromOutline(outlineSchema.parse(object)),
+    }
+  }
   if (mode.kind === 'composition') {
     return {
       schema: compositionPlanSchema,

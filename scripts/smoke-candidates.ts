@@ -22,7 +22,12 @@ const COUNT = Number(process.env.GEOLOGO_CANDIDATES ?? 4)
 const results = await Promise.all(
   Array.from({ length: COUNT }, async (_, i) => {
     const mode = modeForVariant(i)
-    const label = mode.kind === 'archetype' ? `型:${mode.family?.name ?? '自由'}` : `部品:${mode.angle}`
+    const label =
+      mode.kind === 'archetype'
+        ? `型:${mode.family?.name ?? '自由'}`
+        : mode.kind === 'outline'
+          ? '輪郭'
+          : `部品:${mode.angle}`
     try {
       const o = await designLogo(brief, model, mode)
       writeFileSync(`tmp/run${i + 1}-logo.svg`, o.result.logoSvg)
