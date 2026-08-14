@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ARCHETYPES,
+  ARCHETYPE_FAMILIES,
   RATIOS,
   WEIGHTS,
   buildFromArchetype,
@@ -133,5 +134,22 @@ describe('resolveArchetype', () => {
   it('解決できないものは null を返す', () => {
     expect(resolveArchetype('完全に無関係な語')).toBeNull()
     expect(resolveArchetype('xyzzy')).toBeNull()
+  })
+})
+
+describe('ARCHETYPE_FAMILIES', () => {
+  /**
+   * 型を追加したのに系統へ入れ忘れると、その型は候補生成で一度も選ばれない
+   * （候補は必ず系統を割り当てて生成するため）。実装したのに出てこない、という
+   * 気づきにくい欠落になるので、分割が全体をちょうど覆うことを検査する。
+   */
+  it('全アーキタイプを重複なく覆う', () => {
+    const members = ARCHETYPE_FAMILIES.flatMap((f) => f.members)
+    expect(new Set(members).size).toBe(members.length)
+    expect([...members].sort()).toEqual([...ARCHETYPES].sort())
+  })
+
+  it('空の系統がない', () => {
+    for (const f of ARCHETYPE_FAMILIES) expect(f.members.length).toBeGreaterThan(0)
   })
 })

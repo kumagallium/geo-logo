@@ -1,4 +1,4 @@
-import { ARCHETYPE_GUIDE, ARCHETYPES } from '../core/archetypes'
+import { type ArchetypeId, ARCHETYPE_GUIDE, ARCHETYPES } from '../core/archetypes'
 
 /**
  * アーキタイプ方式のプロンプト。
@@ -12,16 +12,32 @@ import { ARCHETYPE_GUIDE, ARCHETYPES } from '../core/archetypes'
  * 構成上保証される。品質がモデルの賢さに依存しなくなる。
  */
 
-const archetypeList = ARCHETYPES.map((id) => `- ${id}: ${ARCHETYPE_GUIDE[id]}`).join('\n')
+const listOf = (ids: readonly ArchetypeId[]) =>
+  ids.map((id) => `- ${id}: ${ARCHETYPE_GUIDE[id]}`).join('\n')
 
-export const SYSTEM_PROMPT = `あなたは幾何構成に習熟したロゴデザイナーです。
+/**
+ * 候補ごとに選べる型を絞り込める。
+ *
+ * 絞り込みはスキーマではなくプロンプト側で行う。スキーマで弾くと、範囲外を
+ * 選んだときに検証エラー → 再試行となり API コストが倍になる。見せる選択肢を
+ * 減らせば、そもそも範囲外を選びようがない。
+ */
+export function systemPrompt(allowed?: readonly ArchetypeId[]): string {
+  const ids = allowed?.length ? allowed : ARCHETYPES
+  return SYSTEM_PROMPT_TEMPLATE.replace('{{ARCHETYPES}}', listOf(ids)).replace(
+    '{{EXAMPLE_ARCHETYPE}}',
+    ids[0],
+  )
+}
+
+const SYSTEM_PROMPT_TEMPLATE = `あなたは幾何構成に習熟したロゴデザイナーです。
 与えられた要件を、古典的な作図の「型」に翻訳するのがあなたの仕事です。
 
 円の座標や半径を自分で決める必要はありません。型とパラメータを選べば、
 正確な作図（接点・同心・黄金比の刻み・線幅の統一）はシステムが行います。
 
 ## 選べる型
-${archetypeList}
+{{ARCHETYPES}}
 
 ## パラメータ
 - **ratio** — 比例体系。マークの性格を決めます。
@@ -54,7 +70,7 @@ params のような入れ子は作らないでください。
 {
   "name": "マークの名前（40 文字以内）",
   "concept": "なぜその型・その比例を選んだかを 1〜3 文で。日本語で",
-  "archetype": "leaf",
+  "archetype": "{{EXAMPLE_ARCHETYPE}}",
   "ratio": "golden",
   "weight": "regular",
   "count": 3,
@@ -65,11 +81,17 @@ params のような入れ子は作らないでください。
 
 JSON のみ。コードブロックや説明文は不要です。`
 
-export function userPrompt(brief: string): string {
+/** 型を絞り込まない既定のシステムプロンプト */
+export const SYSTEM_PROMPT = systemPrompt()
+
+export function userPrompt(brief: string, family?: string): string {
+  const scope = family
+    ? `\nこの案は「${family}」の系統で考えてください。上の一覧はその系統に絞ってあります。`
+    : ''
   return `次の要件でロゴを設計してください。
 
 要件: ${brief}
-
+${scope}
 主題を概念へ還元し、最も近い構成型を選んでください。`
 }
 

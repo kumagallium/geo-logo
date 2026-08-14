@@ -45,6 +45,24 @@ export const ARCHETYPE_GUIDE: Record<ArchetypeId, string> = {
   orbit: '中心円のまわりを円弧が回る。軌道・衛星・観測・周回',
 }
 
+/**
+ * 型の系統。作図の成り立ちで 4 つに分かれる。
+ *
+ * 候補を N 件並行生成するとき、同じブリーフを同じプロンプトで投げると
+ * モデルはほぼ同じ型を選び、候補が重複して選ぶ意味がなくなる（実測）。
+ * 候補ごとに系統を割り当てると、構成の異なる案が確実に並ぶ。
+ * デザイナーが案を出すときの「別の方向から 1 案ずつ」と同じ分け方。
+ */
+export const ARCHETYPE_FAMILIES: ReadonlyArray<{
+  readonly name: string
+  readonly members: readonly ArchetypeId[]
+}> = [
+  { name: '交差（2 円が重なって形を生む）', members: ['leaf', 'leaf-stem', 'crest'] },
+  { name: '包含（一方が他方を含む・欠く）', members: ['arch', 'bitten'] },
+  { name: '反復（同じ要素を等間隔に並べる）', members: ['rosette', 'concentric-arcs'] },
+  { name: '環（閉じた輪を操作する）', members: ['ring-gap', 'orbit'] },
+]
+
 export const RATIOS = ['golden', 'silver', 'integer'] as const
 export const WEIGHTS = ['thin', 'regular', 'bold'] as const
 

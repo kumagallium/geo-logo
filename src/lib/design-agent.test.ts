@@ -1,8 +1,8 @@
 import { MockLanguageModelV3 } from 'ai/test'
 import { describe, expect, it } from 'vitest'
-import { ARCHETYPES } from '../core/archetypes'
+import { ARCHETYPE_FAMILIES, ARCHETYPES } from '../core/archetypes'
 import { describeValidationFailure, designLogo, designPlanSchema } from './design-agent'
-import { SYSTEM_PROMPT } from './design-prompt'
+import { SYSTEM_PROMPT, systemPrompt } from './design-prompt'
 
 /**
  * 修復リトライは 2 種類の失敗を扱う必要がある:
@@ -158,5 +158,28 @@ describe('describeValidationFailure', () => {
 
   it('issues が無ければメッセージにフォールバックする', () => {
     expect(describeValidationFailure(new Error('boom'))).toBe('boom')
+  })
+})
+
+describe('systemPrompt の型の絞り込み', () => {
+  it('系統を渡すとその型だけを提示する', () => {
+    const family = ARCHETYPE_FAMILIES[3]
+    const text = systemPrompt(family.members)
+
+    for (const id of family.members) expect(text).toContain(id)
+    // 他の系統の型は選択肢に出さない。スキーマではなく提示を絞ることで、
+    // 範囲外を選んで検証に落ちる（＝再試行でコスト倍増）経路自体を無くす。
+    const others = ARCHETYPES.filter((id) => !family.members.includes(id))
+    const list = text.slice(text.indexOf('## 選べる型'), text.indexOf('## パラメータ'))
+    for (const id of others) expect(list).not.toContain(id)
+  })
+
+  it('絞り込んだときも出力例がスキーマを通る', () => {
+    for (const family of ARCHETYPE_FAMILIES) {
+      const text = systemPrompt(family.members)
+      const example = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
+      expect(() => designPlanSchema.parse(example)).not.toThrow()
+      expect(family.members).toContain(example.archetype)
+    }
   })
 })

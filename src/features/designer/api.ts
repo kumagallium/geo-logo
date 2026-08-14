@@ -1,3 +1,4 @@
+import { ARCHETYPE_FAMILIES } from '../../core/archetypes'
 import type { LogoDesign } from '../../core/index'
 import { aiErrorFromResponse } from '../../lib/ai-error'
 import { CodedError } from '../../lib/ai-error-codes'
@@ -32,15 +33,22 @@ export type CandidateResult =
  * 幾何の破綻・小サイズでの破綻は自動で弾き、最後の美的判断は人に委ねる分担にする。
  */
 export async function requestDesigns(brief: string, count: number): Promise<CandidateResult[]> {
-  const runs = Array.from({ length: Math.max(1, count) }, () =>
-    requestDesign(brief)
+  const n = Math.max(1, count)
+  // 候補ごとに型の系統を割り当てる。同じプロンプトを N 回投げるとモデルは
+  // ほぼ同じ型を選び、候補が重複して選ぶ意味がなくなる（実測）。
+  // 1 件だけのときは絞らず、最も合う型を自由に選ばせる。
+  const runs = Array.from({ length: n }, (_, i) =>
+    requestDesign(brief, n > 1 ? i : undefined)
       .then((r): CandidateResult => ({ ok: true, ...r }))
       .catch((error): CandidateResult => ({ ok: false, error })),
   )
   return Promise.all(runs)
 }
 
-export async function requestDesign(brief: string): Promise<DesignResponse> {
+export async function requestDesign(
+  brief: string,
+  familyIndex?: number,
+): Promise<DesignResponse> {
   const mode = await detectRuntimeMode()
 
   if (mode === 'static') {
@@ -49,7 +57,11 @@ export async function requestDesign(brief: string): Promise<DesignResponse> {
       throw new CodedError('No model registered', 'NO_MODEL_REGISTERED')
     }
     try {
-      const outcome = await designLogo(brief, createModel(config))
+      const family =
+        familyIndex === undefined
+          ? undefined
+          : ARCHETYPE_FAMILIES[familyIndex % ARCHETYPE_FAMILIES.length]
+      const outcome = await designLogo(brief, createModel(config), family)
       return {
         design: outcome.result.design,
         attempts: outcome.attempts,
@@ -63,7 +75,7 @@ export async function requestDesign(brief: string): Promise<DesignResponse> {
   const res = await fetch(`${import.meta.env.BASE_URL}api/design`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ brief, model: undefined }),
+    body: JSON.stringify({ brief, model: undefined, familyIndex }),
   })
   if (!res.ok) throw await aiErrorFromResponse(res, '設計の生成に失敗しました')
   return (await res.json()) as DesignResponse

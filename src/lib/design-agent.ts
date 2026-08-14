@@ -1,9 +1,13 @@
 import { generateObject, type LanguageModel } from 'ai'
 import { z } from 'zod'
-import { archetypeParamsSchema, buildFromArchetype } from '../core/archetypes'
+import {
+  ARCHETYPE_FAMILIES,
+  archetypeParamsSchema,
+  buildFromArchetype,
+} from '../core/archetypes'
 import { compile, type CompileResult } from '../core/index'
 import { CodedError } from './ai-error-codes'
-import { repairPrompt, SYSTEM_PROMPT, userPrompt } from './design-prompt'
+import { repairPrompt, systemPrompt, userPrompt } from './design-prompt'
 
 export type DesignAttempt = {
   index: number
@@ -47,21 +51,25 @@ const MAX_ATTEMPTS = 3
 export async function designLogo(
   brief: string,
   model: LanguageModel,
+  family?: (typeof ARCHETYPE_FAMILIES)[number],
 ): Promise<DesignOutcome> {
   const attempts: DesignAttempt[] = []
   let lastResult: CompileResult | null = null
   let lastError: unknown = null
+  const system = systemPrompt(family?.members)
 
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const problems = attempts.at(-1)?.problems
-    const prompt = problems?.length ? repairPrompt(brief, problems) : userPrompt(brief)
+    const prompt = problems?.length
+      ? repairPrompt(brief, problems)
+      : userPrompt(brief, family?.name)
 
     let object: unknown
     try {
       const generated = await generateObject({
         model,
         schema: designPlanSchema,
-        system: SYSTEM_PROMPT,
+        system,
         prompt,
         maxOutputTokens: 4000,
       })
