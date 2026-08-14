@@ -43,6 +43,12 @@ const steps: Step[] = []
 const budget = Number(arcs)
 
 // 本数は大きさではなく曲がりの総量で配る。小さくても複雑な抜きが潰れないように
+// 対称軸はマーク全体で 1 つに決める。輪郭ごとの中心を軸にすると、
+// 対でしか対称でない要素を自分の中心で反転して形が壊れる
+const every = contours.flat()
+const markAxis = (Math.min(...every.map((q) => q.x)) + Math.max(...every.map((q) => q.x))) / 2
+const pairs = mirrorPairs(contours, markAxis)
+
 const quota = allocateArcs(contours, budget)
 contours.forEach((points, i) => {
   const id = `c${i}`
