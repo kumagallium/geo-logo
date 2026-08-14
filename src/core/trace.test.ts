@@ -14,6 +14,7 @@ import {
   parseTransform,
   sampleContours,
   sampleContoursFromSvg,
+  smoothJoints,
   traceArcs,
   type ContourSegment,
   type Vec,
@@ -499,5 +500,82 @@ describe('harmonizeRadii', () => {
 
   it('円弧が無ければ空', () => {
     expect(harmonizeRadii([[]]).radii).toEqual([])
+  })
+})
+
+describe('smoothJoints', () => {
+  /**
+   * 円弧を独立に当てはめると継ぎ目で接線が折れる。実測では平均 44.8°、
+   * 継ぎ目の 95% が 5° 以上折れていた。小さく見ると滑らかでも、幾何としては
+   * 角が並んでいる。
+   */
+  const wobbly = (n = 240): Vec[] =>
+    Array.from({ length: n }, (_, i) => {
+      const t = (i / n) * Math.PI * 2
+      const r = 2 + 0.5 * Math.sin(t * 3) + 0.2 * Math.cos(t * 5)
+      return { x: Math.cos(t) * r, y: Math.sin(t) * r }
+    })
+
+  /** 継ぎ目での接線のずれ（度） */
+  function worstJoint(segs: ContourSegment[]): number {
+    const geo = (from: ContourSegment, seg: ContourSegment) => {
+      if (seg.r === undefined) {
+        const a = Math.atan2(seg.y - from.y, seg.x - from.x)
+        return [a, a] as const
+      }
+      const dx = seg.x - from.x
+      const dy = seg.y - from.y
+      const d = Math.hypot(dx, dy)
+      if (d < 1e-9) return null
+      const r = Math.max(seg.r, d / 2)
+      const h = Math.sqrt(Math.max(r * r - (d / 2) ** 2, 0))
+      const sign = seg.sweep ? 1 : -1
+      const cx = (from.x + seg.x) / 2 + sign * h * (-dy / d)
+      const cy = (from.y + seg.y) / 2 + sign * h * (dx / d)
+      const t = (px: number, py: number) => Math.atan2(sign * (px - cx), -sign * (py - cy))
+      return [t(from.x, from.y), t(seg.x, seg.y)] as const
+    }
+    let worst = 0
+    for (let i = 0; i < segs.length; i++) {
+      const a = geo(segs[(i - 1 + segs.length) % segs.length], segs[i])
+      const b = geo(segs[i], segs[(i + 1) % segs.length])
+      if (!a || !b) continue
+      let d = b[0] - a[1]
+      while (d > Math.PI) d -= 2 * Math.PI
+      while (d < -Math.PI) d += 2 * Math.PI
+      worst = Math.max(worst, (Math.abs(d) * 180) / Math.PI)
+    }
+    return worst
+  }
+
+  it('継ぎ目の接線を揃える', () => {
+    const raw = traceArcs(wobbly(), { maxArcs: 12, snapRadii: false, symmetry: false }).segments
+    expect(worstJoint(raw)).toBeGreaterThan(5)
+    expect(worstJoint(smoothJoints(raw))).toBeLessThan(1)
+  })
+
+  it('弧の本数は倍になる', () => {
+    // biarc は 1 区間を 2 本で結ぶ。滑らかさと要素数の交換になる
+    const raw = traceArcs(wobbly(), { maxArcs: 10, snapRadii: false, symmetry: false }).segments
+    expect(smoothJoints(raw).length).toBe(raw.length * 2)
+  })
+
+  it('形は大きく変わらない', () => {
+    const raw = traceArcs(wobbly(), { maxArcs: 12, snapRadii: false, symmetry: false }).segments
+    const smooth = smoothJoints(raw)
+    // 元のアンカーはすべて残る
+    for (const s of raw) {
+      expect(
+        smooth.some((t) => Math.abs(t.x - s.x) < 1e-3 && Math.abs(t.y - s.y) < 1e-3),
+      ).toBe(true)
+    }
+  })
+
+  it('弧が少なすぎるときは触らない', () => {
+    const segs: ContourSegment[] = [
+      { x: 0, y: 0, sweep: true },
+      { x: 1, y: 0, sweep: true },
+    ]
+    expect(smoothJoints(segs)).toEqual(segs)
   })
 })

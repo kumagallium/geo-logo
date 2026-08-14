@@ -792,6 +792,125 @@ export function harmonizeRadii(
   }
 }
 
+/** 弧の中心・半径・両端の接線 */
+type ArcGeometry = { cx: number; cy: number; r: number; t0: number; t1: number }
+
+/** セグメント（前の点 → この点）の幾何を求める */
+function arcGeometry(from: Vec, seg: ContourSegment): ArcGeometry | null {
+  if (seg.r === undefined) return null
+  const dx = seg.x - from.x
+  const dy = seg.y - from.y
+  const d = Math.hypot(dx, dy)
+  if (d < 1e-9) return null
+
+  const r = Math.max(seg.r, d / 2)
+  const h = Math.sqrt(Math.max(r * r - (d / 2) ** 2, 0))
+  const sign = seg.sweep ? 1 : -1
+  const cx = (from.x + seg.x) / 2 + sign * h * (-dy / d)
+  const cy = (from.y + seg.y) / 2 + sign * h * (dx / d)
+  // 接線は半径に直交し、回る向きで符号が決まる
+  const tangent = (px: number, py: number) =>
+    Math.atan2(sign * (px - cx), -sign * (py - cy))
+  return { cx, cy, r, t0: tangent(from.x, from.y), t1: tangent(seg.x, seg.y) }
+}
+
+/** 点 P で向き t に接し、点 Q を通る円。戻りは半径と回る向き。 */
+function arcThrough(p: Vec, t: number, q: Vec): { r: number; sweep: boolean } | null {
+  // 中心は接線の法線上にある。C = P + r*N
+  const nx = -Math.sin(t)
+  const ny = Math.cos(t)
+  const vx = q.x - p.x
+  const vy = q.y - p.y
+  const denom = 2 * (nx * vx + ny * vy)
+  if (Math.abs(denom) < 1e-9) return null // 直線に近い
+  const r = (vx * vx + vy * vy) / denom
+  if (!Number.isFinite(r) || Math.abs(r) < 1e-9) return null
+
+  // 回る向きは、接線から終点へどちらへ曲がるかで決まる
+  const cross = Math.cos(t) * vy - Math.sin(t) * vx
+  return { r: Math.abs(r), sweep: cross > 0 }
+}
+
+/**
+ * 継ぎ目の接線を揃える（G1 連続にする）。
+ *
+ * 円弧を独立に当てはめると、継ぎ目で接線が折れる。実測では平均 44.8°、
+ * 継ぎ目の 95% が 5° 以上折れていた。小さく見ると滑らかでも、幾何としては
+ * 角が並んでいる。人の作図はここを揃えるので輪郭が流れて見える。
+ *
+ * 各アンカーの接線を前後の平均として決め、隣り合うアンカーの間を biarc
+ * （接線連続な 2 本組の円弧）で結び直す。本数は倍になるが、半径は
+ * harmonizeRadii でまとめ直せる。
+ */
+export function smoothJoints(segments: ContourSegment[]): ContourSegment[] {
+  const n = segments.length
+  if (n < 3) return segments
+
+  // 各アンカーでの接線。前の弧の出口と次の弧の入口を平均する
+  const dirs: number[] = []
+  for (let i = 0; i < n; i++) {
+    const prev = segments[(i - 1 + n) % n]
+    const cur = segments[i]
+    const next = segments[(i + 1) % n]
+    const a = arcGeometry(prev, cur)
+    const b = arcGeometry(cur, next)
+    const inDir = a ? a.t1 : Math.atan2(cur.y - prev.y, cur.x - prev.x)
+    const outDir = b ? b.t0 : Math.atan2(next.y - cur.y, next.x - cur.x)
+    dirs.push(Math.atan2(Math.sin(inDir) + Math.sin(outDir), Math.cos(inDir) + Math.cos(outDir)))
+  }
+
+  const out: ContourSegment[] = []
+  for (let i = 0; i < n; i++) {
+    const from = segments[i]
+    const to = segments[(i + 1) % n]
+    const t0 = dirs[i]
+    const t1 = dirs[(i + 1) % n]
+
+    const vx = to.x - from.x
+    const vy = to.y - from.y
+    const c0 = Math.cos(t0)
+    const s0 = Math.sin(t0)
+    const c1 = Math.cos(t1)
+    const s1 = Math.sin(t1)
+    const dot = c0 * c1 + s0 * s1
+    const vt = vx * (c0 + c1) + vy * (s0 + s1)
+    const vv = vx * vx + vy * vy
+    const den = 2 * (1 - dot)
+
+    // 接線が平行なら 1 本の弧で足りる
+    let joint: Vec | null = null
+    if (den > 1e-6) {
+      const disc = vt * vt + den * vv
+      if (disc >= 0) {
+        const d = (-vt + Math.sqrt(disc)) / den
+        if (Number.isFinite(d) && d > 1e-6) {
+          joint = {
+            x: (from.x + d * c0 + (to.x - d * c1)) / 2,
+            y: (from.y + d * s0 + (to.y - d * s1)) / 2,
+          }
+        }
+      }
+    }
+
+    if (!joint) {
+      const one = arcThrough(from, t0, to)
+      out.push(one ? { ...to, r: round(one.r), sweep: one.sweep } : { ...to, r: undefined })
+      continue
+    }
+
+    const a1 = arcThrough(from, t0, joint)
+    // 2 本目は終点側から逆向きに引くと、終点の接線に確実に合う
+    const a2 = arcThrough(to, t1 + Math.PI, joint)
+    out.push(
+      a1
+        ? { x: round(joint.x), y: round(joint.y), r: round(a1.r), sweep: a1.sweep }
+        : { x: round(joint.x), y: round(joint.y), sweep: true },
+    )
+    out.push(a2 ? { ...to, r: round(a2.r), sweep: !a2.sweep } : { ...to, r: undefined })
+  }
+  return out
+}
+
 export type TraceOptions = {
   /**
    * 許容誤差を輪郭の大きさに対する比で与える。

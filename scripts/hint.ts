@@ -17,6 +17,7 @@ import {
   mirrorAxis,
   nestingDepth,
   sampleContoursFromSvg,
+  smoothJoints,
   traceArcs,
 } from '../src/core/trace.js'
 import { getPaper, resetProject } from '../src/core/paper-setup.js'
@@ -104,7 +105,13 @@ const depth = nestingDepth(smoothContours)
 const shapes: Shape[] = []
 const steps: Step[] = []
 smoothContours.forEach((points, i) => {
-  const { segments } = traceArcs(points, { maxArcs: quota[i], mirrorX: symmetric ? 0 : undefined })
+  const { segments: raw } = traceArcs(points, {
+    maxArcs: quota[i],
+    mirrorX: symmetric ? 0 : undefined,
+  })
+  // 継ぎ目の接線を揃える。独立に当てはめた弧は継ぎ目で平均 45° 折れており、
+  // 小さく見ると滑らかでも幾何としては角が並んでいる
+  const segments = process.env.GEOLOGO_SMOOTH === '0' ? raw : smoothJoints(raw)
   if (segments.length < 3) return
   shapes.push({ kind: 'contour', id: `s${i}`, segments })
   steps.push({ op: smoothed[i].solid ? 'add' : 'sub', ref: `s${i}` })
