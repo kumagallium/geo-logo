@@ -55,6 +55,7 @@ const result = compile({
 mkdirSync('tmp', { recursive: true })
 writeFileSync(`tmp/${out}-logo.svg`, result.logoSvg)
 writeFileSync(`tmp/${out}-blueprint.svg`, result.blueprintSvg)
+writeFileSync(`tmp/${out}-poster.svg`, result.posterSvg)
 
 const total = shapes.reduce((n, s) => n + (s.kind === 'contour' ? s.segments.length : 0), 0)
 console.log(`${out}: 輪郭 ${shapes.length}（外形1 + 抜き${shapes.length - 1}）/ 円弧 計${total} 本 / インク ${(result.built.inkRatio * 100).toFixed(0)}%`)

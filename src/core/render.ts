@@ -9,6 +9,14 @@ export type RenderOptions = {
   annotate?: boolean
   /** 背景を塗るか（false なら透明） */
   background?: boolean
+  /**
+   * 設計図の見え方。
+   *
+   * screen: 画面で単体表示する用。白地に青の製図調で、方眼も敷く。
+   * sheet:  作図シートへ載せる用。地は透明、方眼は敷かず、墨は紙に合う暖色系の
+   *         濃灰にする。白いパネルと青い方眼はクリーム色の紙面から浮く。
+   */
+  theme?: 'screen' | 'sheet'
 }
 
 function pad(bounds: Bounds, padding: number): Bounds {
@@ -68,18 +76,25 @@ export function renderBlueprint(
   built: BuildResult,
   options: RenderOptions = {},
 ): string {
-  const padding = options.padding ?? defaultPadding(built.bounds)
-  const box = pad(built.bounds, padding)
   const M = design.module
   const annotate = options.annotate ?? true
+  const sheet = options.theme === 'sheet'
 
-  const ink = '#1F3A5F'
-  const guide = '#9BB4CE'
-  const grid = '#DDE6EE'
+  // 紙面では構図をマーク基準にする。作図線の広がりに合わせて枠を取ると、
+  // 長い線に引きずられてマークが隅へ寄り、小さくなる。はみ出した線は
+  // 枠で切れてよく、むしろ紙面の端まで走っているように見える。
+  const box = sheet
+    ? squareAround(built.artBounds, 1.85)
+    : pad(built.bounds, options.padding ?? defaultPadding(built.bounds))
+
+  const ink = sheet ? '#1B1B1A' : '#1F3A5F'
+  const guide = sheet ? '#8F8878' : '#9BB4CE'
+  const grid = sheet ? '#DCD5C4' : '#DDE6EE'
 
   const hair = Math.max(round(Math.min(box.width, box.height) / 900), 0.4)
 
-  const gridLines = buildGrid(box, gridStep(design.grid) * M, grid, hair)
+  // 紙面では方眼を敷かない。作図円と延長線だけで密度が出る
+  const gridLines = sheet ? '' : buildGrid(box, gridStep(design.grid) * M, grid, hair)
   const goldenGuides = buildGoldenGuides(box, built.artBounds, M, hair)
 
   const shapes = built.construction
@@ -94,7 +109,8 @@ export function renderBlueprint(
           const len = Math.hypot(dx, dy) || 1
           const ex = (dx / len) * M * 0.35
           const ey = (dy / len) * M * 0.35
-          return `<line x1="${round(c.x1 - ex)}" y1="${round(c.y1 - ey)}" x2="${round(c.x2 + ex)}" y2="${round(c.y2 + ey)}" stroke="${guide}" stroke-width="${hair * 2}" stroke-dasharray="${round(M * 0.12)} ${round(M * 0.08)}"/>`
+          const dash = sheet ? '' : ` stroke-dasharray="${round(M * 0.12)} ${round(M * 0.08)}"`
+          return `<line x1="${round(c.x1 - ex)}" y1="${round(c.y1 - ey)}" x2="${round(c.x2 + ex)}" y2="${round(c.y2 + ey)}" stroke="${guide}" stroke-width="${hair * (sheet ? 1.4 : 2)}"${dash}/>`
         }
         case 'rect':
           return `<rect x="${round(c.cx - c.w / 2)}" y="${round(c.cy - c.h / 2)}" width="${round(c.w)}" height="${round(c.h)}" fill="none" stroke="${guide}" stroke-width="${hair * 2}" transform="rotate(${round(c.rotate)} ${round(c.cx)} ${round(c.cy)})"/>`
@@ -109,7 +125,7 @@ export function renderBlueprint(
   const silhouette = built.parts
     .map(
       (p) =>
-        `<path d="${escapeAttr(p.pathData)}" fill="${ink}" fill-opacity="0.14" fill-rule="evenodd"/>`,
+        `<path d="${escapeAttr(p.pathData)}" fill="${ink}" fill-opacity="${sheet ? 0.1 : 0.14}" fill-rule="evenodd"/>`,
     )
     .join('\n    ')
 
@@ -124,7 +140,7 @@ export function renderBlueprint(
 
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox(box)}" role="img" aria-label="${escapeAttr(design.name)} の設計図">
   <title>${escapeText(design.name)} — construction</title>
-  <rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" fill="#FBFDFF"/>
+  ${sheet ? '' : `<rect x="${round(box.x)}" y="${round(box.y)}" width="${round(box.width)}" height="${round(box.height)}" fill="#FBFDFF"/>`}
   <g data-layer="grid">
     ${gridLines}
   </g>
@@ -144,6 +160,14 @@ export function renderBlueprint(
     ${labels}
   </g>
 </svg>`
+}
+
+/** 中心を保ったまま、短辺を factor 倍した正方形の枠にする */
+function squareAround(art: Bounds, factor: number): Bounds {
+  const cx = art.x + art.width / 2
+  const cy = art.y + art.height / 2
+  const side = Math.max(art.width, art.height) * factor
+  return { x: cx - side / 2, y: cy - side / 2, width: side, height: side }
 }
 
 function buildGrid(box: Bounds, step: number, color: string, hair: number): string {
