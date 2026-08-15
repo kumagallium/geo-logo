@@ -30,12 +30,15 @@ const pointSchema = z.object({ x: num(-10, 10, 0), y: num(-10, 10, 0) })
 /**
  * 円弧の当てはめの許容誤差（輪郭の大きさに対する比）。
  *
- * 0.06 は「点 6〜14」向けに決めた値。点が増えるほど描いた側の意図は細かく
- * なるので、同じ比で畳むと潰れる（実測: 点 31 のジャッカルは弧 6 本に畳まれ、
- * 立った耳 2 本が 1 本の弧に均された。0.027 相当まで下げると 8 本になり、
- * 耳が割れた）。基準の点数からの比で緩める。
+ * 0.06 は「点 6〜14」向けに決めた値で、密なラフには緩すぎた。実測で 0.06 /
+ * 0.025 / 0.012 を熊とジャッカルの両方に当てたところ、0.06 は輪郭が 3 つの円へ
+ * 潰れ（耳も口吻も消える）、0.012 は逆に点をなぞって凸凹が残った。0.025 で
+ * 両方とも口吻・耳・目・キーラインが揃う。
+ *
+ * さらに、点が増えるほど描いた側の意図は細かくなるので、基準の点数からの比で
+ * 緩める。
  */
-const TOLERANCE = 0.06
+const TOLERANCE = 0.025
 const BASE_POINTS = 14
 
 const toleranceFor = (points: number, polish: number): number =>
@@ -70,7 +73,9 @@ export const outlineSchema = z.object({
     .union([z.boolean(), z.string(), z.null()])
     .optional()
     .transform((v) => v === true || v === 'true'),
-  contours: z.array(outlineContourSchema).min(1).max(8),
+  // 上限 12。四足の生き物を描くと、体＋奥の 2 脚＋目・鼻・耳・首とキーライン
+  // 2 本で 9 本になり、8 では足りなかった（実測。熊を描いていて当たった）
+  contours: z.array(outlineContourSchema).min(1).max(12),
   /**
    * どれくらい整えるか。1 が標準、小さいほどラフに忠実、大きいほど畳む。
    *
