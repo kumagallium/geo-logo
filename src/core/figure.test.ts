@@ -459,6 +459,24 @@ describe('白の縁取り', () => {
     expect(near(1)).toBeLessThan(near(0))
   })
 
+  // 縁取りは「下にあるものから分ける」ためのもので、自分の兄弟を切ってはいけない
+  it('反復した個体どうしは互いの縁取りで削り合わない', () => {
+    const d = buildFromFigure(
+      base([
+        { id: 'core', form: 'disc', x: 0, y: 0, size: 0.7 },
+        { id: 'petal', form: 'vesica', on: 'core', grip: 'on', at: 'right', size: 0.8,
+          count: 5, spread: 340, outline: 1 },
+      ] as never),
+    )
+    const ops = d.parts[0].steps.map((s) => s.op)
+    // 節点の中では抜きが全部先に来る（sub が add より後ろに現れない）
+    const lastCut = ops.lastIndexOf('sub')
+    const firstPetalAdd = d.parts[0].steps.findIndex(
+      (s) => s.op === 'add' && s.ref.startsWith('petal_') && !s.ref.includes('O'),
+    )
+    expect(lastCut).toBeLessThan(firstPetalAdd)
+  })
+
   it('縁取り 0 なら何も足さない', () => {
     const d = buildFromFigure(
       base([

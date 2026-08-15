@@ -66,6 +66,15 @@ export type RasterOptions = {
   size?: number
   /** 余白（マークの短辺に対する比） */
   margin?: number
+  /**
+   * 1 画素あたりの標本数（片辺）。1 で内外判定のみ、3 で 9 点の平均。
+   *
+   * 画素ごとに内外を判定するだけだと縁が階段になり、案を並べて見比べる
+   * ときに「作図が汚い」と読み違える（実際に読み違えた）。見るための絵は
+   * 標本を増やす。島を数えるような二値の判定は 1 のままでよく、そちらは
+   * 1 回 16ms なので費用を上げたくない。
+   */
+  samples?: number
 }
 
 /**
@@ -79,6 +88,7 @@ export function rasterizeGray(
 ): { gray: Uint8Array; size: number } {
   const size = Math.max(32, Math.min(options.size ?? 320, 1024))
   const margin = options.margin ?? 0.08
+  const sub = Math.max(1, Math.min(Math.round(options.samples ?? 1), 4))
 
   const gray = new Uint8Array(size * size).fill(255)
   const art = built.artBounds
@@ -99,10 +109,21 @@ export function rasterizeGray(
     const x0 = cx - span / 2 + step / 2
     const y0 = cy - span / 2 + step / 2
 
+    // 標本は画素の中を等間隔に取る（sub=1 なら中心 1 点）
+    const offsets: number[] = []
+    for (let i = 0; i < sub; i++) offsets.push((i + 0.5) / sub - 0.5)
+    const total = sub * sub
+
     for (let py = 0; py < size; py++) {
       for (let px = 0; px < size; px++) {
-        const pt = new p.Point(x0 + px * step, y0 + py * step)
-        if (shape.contains(pt)) gray[py * size + px] = 17
+        let hits = 0
+        for (const oy of offsets) {
+          for (const ox of offsets) {
+            const pt = new p.Point(x0 + (px + ox) * step, y0 + (py + oy) * step)
+            if (shape.contains(pt)) hits++
+          }
+        }
+        if (hits > 0) gray[py * size + px] = Math.round(255 - (255 - 17) * (hits / total))
       }
     }
     shape.remove()
@@ -114,9 +135,9 @@ export function rasterizeGray(
 }
 
 /**
- * ビルド結果を正方形の PNG にする。
+ * ビルド結果を正方形の PNG にする。見るための絵なので、既定で縁を均す。
  */
 export function rasterize(built: BuildResult, options: RasterOptions = {}): Buffer {
-  const { gray, size } = rasterizeGray(built, options)
+  const { gray, size } = rasterizeGray(built, { samples: 3, ...options })
   return encodeGrayPng(gray, size)
 }

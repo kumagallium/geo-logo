@@ -789,6 +789,13 @@ export function buildFromFigure(plan: FigurePlan): LogoDesign {
 
   placed.forEach((p, i) => {
     const base = p.node.id || `n${i}`
+    // 白の縁取りは「下にあるものから分ける」ためのもので、自分の兄弟を切って
+    // はいけない。1 つずつ「抜いて置く」を繰り返すと、隣り合うコピーが互いの
+    // 縁取りで削り合い、楔形の屑が残る（実測: 花弁 5 枚を 340° に詰めて
+    // 縁取りを付けたら、島が 1 → 6、角が 5 → 20 になった）。
+    // 節点の中では、抜きを全部先に済ませてから置く。
+    const cuts: Step[] = []
+    const inks: Step[] = []
     p.copies.forEach((c, k) => {
       const tag = p.copies.length > 1 ? `${base}_${k}` : base
       p.node.layers.forEach((layer, li) => {
@@ -827,10 +834,10 @@ export function buildFromFigure(plan: FigurePlan): LogoDesign {
         // 白の縁取り。太らせた同じ形を先に抜いてから本体を置くと、重なった
         // 相手との境目に一定幅の白が残る。順序が宣言順になっている前提。
         if (li === 0 && layer === 'ink' && p.node.outline > 0) {
-          steps.push({ op: 'sub', ref: emit(`${id}O`, round(p.node.outline * pen)) })
+          cuts.push({ op: 'sub', ref: emit(`${id}O`, round(p.node.outline * pen)) })
         }
         const ref = emit(id, 0)
-        steps.push({ op: layer === 'paper' ? 'sub' : 'add', ref })
+        inks.push({ op: layer === 'paper' ? 'sub' : 'add', ref })
         if (li === 0) radiusOf.set(id, r)
         // 層どうしは同心。これを宣言しておくと設計図に関係が出る
         if (li > 0 && anchorOf(p.node.form, id) && anchorOf(p.node.form, tag)) {
@@ -860,6 +867,7 @@ export function buildFromFigure(plan: FigurePlan): LogoDesign {
         }
       }
     })
+    steps.push(...cuts, ...inks)
   })
 
   // 最初の演算が抜きだと何も生まれない

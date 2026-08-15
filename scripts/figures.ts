@@ -86,7 +86,7 @@ for (const r of results) {
     continue
   }
   const { result } = r.outcome
-  cells.push(rasterizeGray(result.built, { size: CELL }).gray)
+  cells.push(rasterizeGray(result.built, { size: CELL, samples: 3 }).gray)
   writeFileSync(`tmp/gen/${r.tag}.json`, JSON.stringify(r.outcome.plan, null, 2))
   const problems = diagnose(result)
   console.log(
