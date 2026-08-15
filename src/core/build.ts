@@ -299,6 +299,33 @@ function findCollapse(
   return null
 }
 
+function applyOp(
+  op: Step['op'],
+  acc: paper.PathItem,
+  operand: paper.PathItem,
+): paper.PathItem {
+  switch (op) {
+    case 'add':
+      return acc.unite(operand)
+    case 'sub':
+      return acc.subtract(operand)
+    case 'intersect':
+      return acc.intersect(operand)
+  }
+}
+
+/** 演算が向きに反したか。相対 0.1% は当てはめの揺れとして見逃す。 */
+function violates(op: Step['op'], before: number, after: number): boolean {
+  const slack = Math.max(before * 0.001, 1e-9)
+  return op === 'add' ? after < before - slack : after > before + slack
+}
+
+/** パスデータから作り直した複製を返す（元は残す）。 */
+function reparse(item: paper.PathItem): paper.PathItem {
+  const p = getPaper()
+  return item.pathData ? new p.CompoundPath(item.pathData) : new p.Path()
+}
+
 function foldSteps(
   steps: Step[],
   resolve: (ref: string) => paper.PathItem | null,
@@ -323,18 +350,30 @@ function foldSteps(
       continue
     }
 
-    let next: paper.PathItem
-    switch (step.op) {
-      case 'add':
-        next = acc.unite(operand)
-        break
-      case 'sub':
-        next = acc.subtract(operand)
-        break
-      case 'intersect':
-        next = acc.intersect(operand)
-        break
+    const before = areaOf(acc)
+    let next = applyOp(step.op, acc, operand)
+
+    // 演算には向きがある。和は減らないし、差と積は増えない。破ったら
+    // paper の内部構造が壊れているので、パスデータから作り直して 1 度やり直す。
+    //
+    // 黙って通すと、その時点までに積み上げた塊が丸ごと消えたまま次の add が
+    // 新しい塊として積み直され、破綻が最後まで表面化しない。実測: 頭に内接する
+    // 小円を union した瞬間に胴・頭・四肢が消え、目と弧だけのマークになった。
+    if (violates(step.op, before, areaOf(next))) {
+      next.remove()
+      const cleanAcc = reparse(acc)
+      const cleanOperand = reparse(operand)
+      next = applyOp(step.op, cleanAcc, cleanOperand)
+      cleanAcc.remove()
+      cleanOperand.remove()
+      if (violates(step.op, before, areaOf(next))) {
+        warnings.push(`${ctx}: ${step.op} "${step.ref}" が破綻したので飛ばした`)
+        next.remove()
+        operand.remove()
+        continue
+      }
     }
+
     acc.remove()
     operand.remove()
     acc = next
