@@ -340,13 +340,14 @@ function extractJson(text: string): unknown {
  */
 function isSchemaRejection(err: unknown): boolean {
   const m = err instanceof Error ? err.message : String(err ?? '')
-  // 文言はプロバイダーごとに違う。Anthropic だけでも
+  // 実測した文言だけを拾う。Anthropic は同じ拒否を
   // 「too many parameters with union types」「Schema is too complex」
-  // 「Grammar compilation timed out」の 3 通りを実測した。
-  return (
-    /too complex|too many parameters|union types|grammar|compilation|schema/i.test(m) &&
-    !/statusCode/i.test(m)
-  )
+  // 「Grammar compilation timed out」の 3 通りで返す。
+  //
+  // "schema" のような一般語まで拾うと、**モデルの出力が検証に落ちた場合**まで
+  // ここへ来てしまう（AI SDK の検証エラーの文面にも schema が入る）。それは
+  // 修復リトライで直すべき失敗で、経路を切り替える話ではない。
+  return /too many parameters|union types|too complex|grammar compilation/i.test(m)
 }
 
 const MAX_ATTEMPTS = 3
