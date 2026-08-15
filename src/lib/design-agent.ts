@@ -6,8 +6,10 @@ import {
   buildFromArchetype,
 } from '../core/archetypes'
 import { buildFromComposition, compositionSchema } from '../core/composition'
+import { buildFromFigure, figureSchema } from '../core/figure'
 import { buildFromOutline, outlineSchema } from '../core/outline'
 import { compile, type CompileResult, type LogoDesign } from '../core/index'
+import { islandsOf } from '../core/metrics'
 import { CodedError } from './ai-error-codes'
 import {
   COMPOSITION_SYSTEM_PROMPT,
@@ -24,6 +26,11 @@ import {
   systemPrompt,
   userPrompt,
 } from './design-prompt'
+import {
+  FIGURE_SYSTEM_PROMPT,
+  figureRepairPrompt,
+  figureUserPrompt,
+} from './figure-prompt'
 
 /** 部品方式の計画。幾何は core/composition.ts が組み立てる。 */
 export const compositionPlanSchema = compositionSchema
@@ -37,6 +44,13 @@ export type DesignOutcome = {
   brief: string
   result: CompileResult
   attempts: DesignAttempt[]
+  /**
+   * 採用したモデルの出力そのもの。
+   *
+   * CompileResult には展開済みの DSL しか残らないが、直すときに触りたいのは
+   * 元の計画（型の選択・節点の関係）の側で、DSL からは復元できない。
+   */
+  plan: unknown
 }
 
 /**
@@ -105,6 +119,7 @@ export type DesignMode =
     }
   | { kind: 'composition'; angle?: string }
   | { kind: 'outline' }
+  | { kind: 'figure' }
 
 /**
  * 部品方式で候補を分けるための視点。デザイナーが案を出すときの切り口。
@@ -143,9 +158,14 @@ export function modeForVariant(index: number): DesignMode {
       structure: STRUCTURES[(i / 2) % STRUCTURES.length],
     }
   }
-  // 部品方式は円を詰めるので、どんな題材も丸い団子になる。3 案に 1 案は
-  // 輪郭の通過点から作図させて、具象の輪郭が出る道を残す。
-  if (i % 3 === 1) return { kind: 'outline' }
+  // 奇数番は具象を扱う 3 経路で回す。
+  //
+  // 部品方式は円を詰めるので、どんな題材も丸い団子になる。関係方式は部品を
+  // 関係で組むので構造が残り、同じ題材で図形数が 5〜16 から 14〜36 へ増えた。
+  // 輪郭方式は通過点から起こす別の道。どれが効くかは題材によるので選ばせる。
+  const turn = ((i - 1) / 2) % 3
+  if (turn === 0) return { kind: 'figure' }
+  if (turn === 1) return { kind: 'outline' }
   return {
     kind: 'composition',
     angle: COMPOSITION_ANGLES[((i - 1) / 2) % COMPOSITION_ANGLES.length],
@@ -254,6 +274,15 @@ function specFor(brief: string, mode: DesignMode): ModeSpec {
       build: (object) => buildFromOutline(outlineSchema.parse(object)),
     }
   }
+  if (mode.kind === 'figure') {
+    return {
+      schema: figureSchema,
+      system: FIGURE_SYSTEM_PROMPT,
+      user: figureUserPrompt(brief),
+      repair: (problems) => figureRepairPrompt(brief, problems),
+      build: (object) => buildFromFigure(figureSchema.parse(object)),
+    }
+  }
   if (mode.kind === 'composition') {
     return {
       schema: compositionPlanSchema,
@@ -305,6 +334,7 @@ export async function designLogo(
 ): Promise<DesignOutcome> {
   const attempts: DesignAttempt[] = []
   let lastResult: CompileResult | null = null
+  let lastPlan: unknown = null
   let lastError: unknown = null
   const spec = specFor(brief, mode)
 
@@ -336,6 +366,7 @@ export async function designLogo(
 
     const result = compile(spec.build(object))
     lastResult = result
+    lastPlan = object
 
     const found = diagnose(result)
     attempts.push({ index: i, problems: found })
@@ -349,7 +380,7 @@ export async function designLogo(
       'DESIGN_STRUCTURE_FAILED',
     )
   }
-  return { brief, result: lastResult, attempts }
+  return { brief, result: lastResult, attempts, plan: lastPlan }
 }
 
 /**
@@ -432,6 +463,43 @@ export function diagnose(result: CompileResult): string[] {
         '離れて置かれた部品は 1 つのマークに見えません。',
     )
   }
+
+  // 墨が実際に離れているか。
+  //
+  // 上の unrelated は「設計として関係が宣言されているか」を見るので、
+  // 関係を宣言してさえいれば通る。だが外接は 1 点でしか触れないので、
+  // 宣言があっても目には別の物体に見える（実測: 頭の上に大きな環が浮いた）。
+  // 出来上がった画素で数えれば、見えているとおりに判定できる。
+  //
+  // 白に囲まれた墨（瞳・覗き）は意図された造形なので数に入れない。
+  // 離れていること自体は失敗ではない。音の輪・光線・星のように、離して置くのが
+  // 正しい構成がある。大きさで 3 つに分けて、両端だけを咎める。
+  //
+  //   1% 未満    … 解像度を 96 / 192 / 384 / 768 と振ると、この帯の島だけが
+  //                解像度に追随して増えた（ある生成物で 2 → 5 → 5 → 9）。
+  //                輪郭が毛ほどの幅でくびれているだけで、目には繋がっている。
+  //   1〜5%      … ゴミ。意味を持てる大きさではない。
+  //   5〜15%     … 添え。音の輪はこの帯に入った（実測 5 / 6 / 7 / 9%）ので通す。
+  //   15% 以上   … マークが 2 つに割れている。1 つのマークに見えない。
+  // 囲いと同心の波紋は、枠が主役と入れ子になるので detached に入らない
+  const { detached } = islandsOf(result.built)
+  const specks = detached.filter((a) => a >= 0.01 && a < 0.05)
+  if (specks.length > 0) {
+    problems.push(
+      `全体の ${specks.map((a) => `${(a * 100).toFixed(0)}%`).join(' / ')} しかない墨が` +
+        `${specks.length} つ、本体から離れています。この大きさの離れた塊はゴミに見えます。` +
+        '主役に触れる位置へ寄せる（grip を "on" や "inside" にする）か、消してください。' +
+        '白で囲んだ抜き（layers の paper）はこの判定に入らないので、覗きを作りたい' +
+        '場合はそちらを使ってください。',
+    )
+  }
+  // 大きな塊が 2 つに割れている場合も咎めようとしたが、やめた。
+  //
+  // 同心の弧でできたマーク（波紋・音の輪）は、弧ごとに離れていて枠も入れ子に
+  // ならない（実測: 5 島に分かれ、枠は x 101..152 / 86..121 / 78..107 …と
+  // ずれて並ぶ）。囲いも触れていないのが正しい。「割れている」と「そう作って
+  // ある」を画素から見分ける方法が見つからず、正しい構図を咎める側の害が
+  // 大きいので、大きな島は通す。小さなゴミだけを見る。
 
   // 小サイズでの成立性。ロゴはファビコンや印刷でも読めなければ使えない。
   const { inkRatio, minStrokeRatio } = result.built
