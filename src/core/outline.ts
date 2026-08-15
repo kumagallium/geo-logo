@@ -39,9 +39,13 @@ export const outlineContourSchema = z.object({
       const k = typeof v === 'string' ? v.trim().toLowerCase() : ''
       return k === 'hole' || k === 'sub' || k === 'cut' ? ('hole' as const) : ('solid' as const)
     }),
-  // 4 点未満では閉じた輪郭にならない。24 点を超えると点で形を決めることに
-  // なり、円弧に均す意味が消える（＝トレースと同じになる）
-  points: z.array(pointSchema).min(4).max(24),
+  // 4 点未満では閉じた輪郭にならない。
+  //
+  // 上限は 24 から 64 へ上げた。24 は弱いモデル向けの設定で、「点を増やすと
+  // 写生になる」という理屈で絞っていたが、実際に効いていたのは点の数ではなく
+  // **円弧に均す工程**のほうだった。人がラフを描くときも 20 点では足りない。
+  // 円弧の本数は許容誤差で決まるので、点を増やしても作図の粗さは変わらない。
+  points: z.array(pointSchema).min(4).max(64),
 })
 
 export const outlineSchema = z.object({
@@ -52,7 +56,7 @@ export const outlineSchema = z.object({
     .union([z.boolean(), z.string(), z.null()])
     .optional()
     .transform((v) => v === true || v === 'true'),
-  contours: z.array(outlineContourSchema).min(1).max(5),
+  contours: z.array(outlineContourSchema).min(1).max(8),
 })
 
 export type OutlinePlan = z.infer<typeof outlineSchema> & { palette?: LogoDesign['palette'] }
@@ -64,12 +68,24 @@ export type OutlinePlan = z.infer<typeof outlineSchema> & { palette?: LogoDesign
  * 折れる。先に滑らかな曲線を通してから当てはめると、点の数と円弧の本数が
  * 切り離せる（通過点 10 個から円弧 5 本、ということが起きる）。
  */
-function interpolate(points: Vec[], perSegment = 16): Vec[] {
+function spline(points: Vec[], closed: boolean, perSegment: number): Vec[] {
   const n = points.length
-  if (n < 4) return points
-  const at = (i: number) => points[((i % n) + n) % n]
+  if (n < 2) return points
+  // 開いた区間の端は、1 つ内側を折り返した仮の点で補う
+  const at = (i: number): Vec => {
+    if (closed) return points[((i % n) + n) % n]
+    if (i < 0) return { x: 2 * points[0].x - points[1].x, y: 2 * points[0].y - points[1].y }
+    if (i > n - 1) {
+      return {
+        x: 2 * points[n - 1].x - points[n - 2].x,
+        y: 2 * points[n - 1].y - points[n - 2].y,
+      }
+    }
+    return points[i]
+  }
+  const last = closed ? n - 1 : n - 2
   const out: Vec[] = []
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i <= last; i++) {
     const p0 = at(i - 1)
     const p1 = at(i)
     const p2 = at(i + 1)
@@ -94,6 +110,49 @@ function interpolate(points: Vec[], perSegment = 16): Vec[] {
       const b2 = lerp(a2, a3, t[1], t[3])
       out.push(lerp(b1, b2, t[1], t[2]))
     }
+  }
+  if (!closed) out.push(points[n - 1])
+  return out
+}
+
+/**
+ * ラフの鋭角を残したまま、間を滑らかに繋ぐ。
+ *
+ * 閉じた曲線として一気に補間すると、描いた側が意図した角も均される。
+ * 実測: ジャッカルの立った耳 2 本と羽根が、1 つの丸い瘤に溶けた。
+ *
+ * 制御点を二重にする定石は、中心化パラメータだと点間距離が 0 になって
+ * 補間が壊れる（魚の尾が消えた）。**角で切って、区間ごとに開いた曲線として
+ * 補間する。** 角はそのまま通過点なので厳密に残る。
+ */
+function interpolate(points: Vec[], perSegment = 16, cornerDegrees = 60): Vec[] {
+  const n = points.length
+  if (n < 4) return points
+
+  const limit = (cornerDegrees * Math.PI) / 180
+  const corners: number[] = []
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n]
+    const cur = points[i]
+    const next = points[(i + 1) % n]
+    const a = Math.atan2(cur.y - prev.y, cur.x - prev.x)
+    const b = Math.atan2(next.y - cur.y, next.x - cur.x)
+    if (Math.abs(Math.atan2(Math.sin(b - a), Math.cos(b - a))) > limit) corners.push(i)
+  }
+  if (corners.length === 0) return spline(points, true, perSegment)
+
+  const out: Vec[] = []
+  for (let k = 0; k < corners.length; k++) {
+    const from = corners[k]
+    const to = corners[(k + 1) % corners.length]
+    const run: Vec[] = [points[from]]
+    let i = from
+    do {
+      i = (i + 1) % n
+      run.push(points[i])
+    } while (i !== to)
+    // 末尾は次の区間の先頭と重なるので落とす
+    out.push(...spline(run, false, perSegment).slice(0, -1))
   }
   return out
 }
