@@ -76,7 +76,14 @@ export function fromEnv(): ModelConfig | undefined {
       provider: 'anthropic',
       modelId: process.env.GEOLOGO_MODEL ?? 'claude-opus-5',
       apiKey,
-      apiBase: process.env.GEOLOGO_BASE_URL ?? null,
+      // GEOLOGO_BASE_URL は読まない。
+      //
+      // これは openai-compatible 用の設定で、.env に別プロバイダーの URL を
+      // 残したまま GEOLOGO_PROVIDER=anthropic に切り替えると、**Anthropic の
+      // キーがその別プロバイダーのエンドポイントへ送られる**。キーの漏洩に
+      // 直結するので、プロバイダーをまたいで共有しない。
+      // Anthropic の宛先を変えたいときは ANTHROPIC_BASE_URL を使う。
+      apiBase: process.env.ANTHROPIC_BASE_URL ?? null,
       createdAt: new Date().toISOString(),
     }
   }
