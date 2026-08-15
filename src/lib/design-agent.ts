@@ -340,7 +340,13 @@ function extractJson(text: string): unknown {
  */
 function isSchemaRejection(err: unknown): boolean {
   const m = err instanceof Error ? err.message : String(err ?? '')
-  return /too complex|too many parameters|union types|schema/i.test(m) && !/statusCode/i.test(m)
+  // 文言はプロバイダーごとに違う。Anthropic だけでも
+  // 「too many parameters with union types」「Schema is too complex」
+  // 「Grammar compilation timed out」の 3 通りを実測した。
+  return (
+    /too complex|too many parameters|union types|grammar|compilation|schema/i.test(m) &&
+    !/statusCode/i.test(m)
+  )
 }
 
 const MAX_ATTEMPTS = 3
