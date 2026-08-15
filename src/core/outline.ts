@@ -27,6 +27,20 @@ const num = (min: number, max: number, fallback: number) =>
 
 const pointSchema = z.object({ x: num(-10, 10, 0), y: num(-10, 10, 0) })
 
+/**
+ * 円弧の当てはめの許容誤差（輪郭の大きさに対する比）。
+ *
+ * 0.06 は「点 6〜14」向けに決めた値。点が増えるほど描いた側の意図は細かく
+ * なるので、同じ比で畳むと潰れる（実測: 点 31 のジャッカルは弧 6 本に畳まれ、
+ * 立った耳 2 本が 1 本の弧に均された。0.027 相当まで下げると 8 本になり、
+ * 耳が割れた）。基準の点数からの比で緩める。
+ */
+const TOLERANCE = 0.06
+const BASE_POINTS = 14
+
+const toleranceFor = (points: number, polish: number): number =>
+  TOLERANCE * polish * Math.min(1, BASE_POINTS / Math.max(points, 1))
+
 export const outlineContourSchema = z.object({
   label: z
     .union([z.string(), z.null()])
@@ -57,6 +71,15 @@ export const outlineSchema = z.object({
     .optional()
     .transform((v) => v === true || v === 'true'),
   contours: z.array(outlineContourSchema).min(1).max(8),
+  /**
+   * どれくらい整えるか。1 が標準、小さいほどラフに忠実、大きいほど畳む。
+   *
+   * 許容誤差はもともと「点 6〜14」向けに 0.06 と粗く決めてあった。密なラフを
+   * 通すと畳みすぎる（実測: 点 31 のジャッカルの頭部が弧 6 本になり、耳の
+   * 切れ込みが 1 本の弧に均された）。ラフの密度に応じて呼ぶ側が決められる
+   * ようにする。
+   */
+  polish: num(0.3, 3, 1),
 })
 
 export type OutlinePlan = z.infer<typeof outlineSchema> & { palette?: LogoDesign['palette'] }
@@ -167,17 +190,56 @@ function symmetrize(points: Vec[]): Vec[] {
   return [...sorted, ...back]
 }
 
-export function buildFromOutline(plan: OutlinePlan): LogoDesign {
-  const parsed = outlineSchema.parse(plan)
-
+/** 点を紙面に収め、原点へ寄せる。ラフの絶対値をそのまま寸法にしない。 */
+function prepare(parsed: OutlinePlan): Vec[][] {
   const raw = parsed.contours.map((c) => (parsed.symmetry ? symmetrize(c.points) : c.points))
-  // 紙面に収める。ここで揃えておかないと、点の絶対値がそのまま寸法になる
   const scaled = fitToModule(raw, 5)
-  // 原点へ寄せる。寄せないと設計図で作図円が本体から離れた位置に描かれる
   const all = scaled.flat()
   const cx = (Math.min(...all.map((p) => p.x)) + Math.max(...all.map((p) => p.x))) / 2
   const cy = (Math.min(...all.map((p) => p.y)) + Math.max(...all.map((p) => p.y))) / 2
-  const fitted = scaled.map((c) => c.map((p) => ({ x: p.x - cx, y: p.y - cy })))
+  return scaled.map((c) => c.map((p) => ({ x: p.x - cx, y: p.y - cy })))
+}
+
+/**
+ * ラフから完成形までの各段を、そのまま取り出す。
+ *
+ * 点を書いてシルエットだけを見ていると、**どの点が悪いのか分からない**。
+ * 直すたびに勘で座標を動かすことになる。点・補間した曲線・当てはめた円弧を
+ * 重ねて見られれば、直す場所が一目で決まる。人が下描きを直すときに
+ * 見ているものと同じ。
+ */
+export type OutlineStage = {
+  label: string
+  role: 'solid' | 'hole'
+  /** 紙面に収めたあとの入力点 */
+  points: Vec[]
+  /** 角を残したまま補間した密な点列 */
+  dense: Vec[]
+  /** 当てはめた円弧（半径を揃える前） */
+  segments: ReturnType<typeof traceArcs>['segments']
+}
+
+export function outlineStages(plan: OutlinePlan): OutlineStage[] {
+  const parsed = outlineSchema.parse(plan)
+  return prepare(parsed).map((points, i) => {
+    const dense = interpolate(points)
+    return {
+      label: parsed.contours[i].label || `輪郭 ${i + 1}`,
+      role: parsed.contours[i].role,
+      points,
+      dense,
+      segments: traceArcs(dense, {
+        toleranceRatio: toleranceFor(points.length, parsed.polish),
+        mirrorX: parsed.symmetry ? 0 : undefined,
+        snapRadii: true,
+      }).segments,
+    }
+  })
+}
+
+export function buildFromOutline(plan: OutlinePlan): LogoDesign {
+  const parsed = outlineSchema.parse(plan)
+  const fitted = prepare(parsed)
 
   const shapes: Shape[] = []
   const steps: Step[] = []
@@ -186,7 +248,7 @@ export function buildFromOutline(plan: OutlinePlan): LogoDesign {
     // 本数ではなく許容誤差で切る。本数指定は冗長な弧を並べたうえ精度も落ちる
     const { segments: fit } = traceArcs(dense, {
       // 粗く切る。細かく刻むと点をなぞるだけになり、円弧に均す意味が消える
-      toleranceRatio: 0.06,
+      toleranceRatio: toleranceFor(points.length, parsed.polish),
       mirrorX: parsed.symmetry ? 0 : undefined,
       // 作図側では半径を比例体系へ寄せる。トレースでは元の形が設計なので
       // 寄せると壊れるが、こちらは寄せることが目的（作図した形にする）
