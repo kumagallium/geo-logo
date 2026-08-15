@@ -1,0 +1,35 @@
+{
+ "name": "三つ葉",
+ "concept": "小さな芯に葉を 3 枚、全周へ等配置する。",
+ "pose": "radial",
+ "ratio": "golden",
+ "pen": "regular",
+ "nodes": [
+  {
+   "id": "core",
+   "form": "disc",
+   "x": 0,
+   "y": 0,
+   "size": 0.4
+  },
+  {
+   "id": "leaf",
+   "form": "vesica",
+   "on": "core",
+   "grip": "on",
+   "at": "up",
+   "size": 1.6,
+   "count": 3,
+   "spread": 360
+  },
+  {
+   "id": "stem",
+   "form": "limb",
+   "on": "core",
+   "grip": "on",
+   "at": "down",
+   "size": 0.3,
+   "length": 3
+  }
+ ]
+}
