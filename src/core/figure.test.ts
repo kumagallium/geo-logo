@@ -275,7 +275,8 @@ describe('反復の混み合い', () => {
     if (!leaf || !('cx' in leaf) || !('r' in leaf)) throw new Error('leaf')
     // 芯 0.4 の円周上ではなく、葉どうしが噛み合う位置まで外へ出る
     expect(Math.hypot(leaf.cx, leaf.cy)).toBeGreaterThan(0.8)
-    expect(leaf.r).toBeCloseTo(1.6, 1)
+    // 縮められていない。ヴェシカの生成円は半分の長さより大きくなる
+    expect(leaf.r).toBeGreaterThan(1.6)
   })
 
   it('親より小さい子は縮める（向日葵）', () => {
@@ -328,6 +329,34 @@ describe('ペン', () => {
     })
     expect(widths[0]).toBeLessThan(widths[1])
     expect(widths[1]).toBeLessThan(widths[2])
+  })
+})
+
+describe('ヴェシカの細長さ', () => {
+  // 生成円の半径を size とする書き方だと細長さが 1.38:1 に固定され、
+  // 向日葵や桜の花弁（実物は 4:1 前後）がどれも豆になる
+  const lens = (slender: number) => {
+    const d = buildFromFigure(
+      base([{ id: 'p', form: 'vesica', x: 0, y: 0, size: 1, angle: 0, slender }] as never),
+    )
+    const a = d.shapes.find((s) => s.id === 'pa')
+    const b = d.shapes.find((s) => s.id === 'pb')
+    if (!a || !('cx' in a) || !('r' in a) || !b || !('cy' in b)) throw new Error('lens')
+    const off = Math.abs(b.cy - a.cy) / 2
+    // 長さは angle 方向、幅はその法線方向
+    return { length: Math.sqrt(a.r * a.r - off * off), width: a.r - off }
+  }
+
+  it('size が半分の長さになる', () => {
+    expect(lens(1.4).length).toBeCloseTo(1, 2)
+    expect(lens(4).length).toBeCloseTo(1, 2)
+  })
+
+  it('slender が長さ ÷ 幅を決める', () => {
+    for (const s of [1.4, 2.5, 4, 6]) {
+      const { length, width } = lens(s)
+      expect(length / width, `slender ${s}`).toBeCloseTo(s, 1)
+    }
   })
 })
 

@@ -157,14 +157,28 @@ export const figureNodeSchema = z.object({
   /** 同心の重ね。外から内へ。['ink','paper','ink'] で環・白・瞳になる */
   layers: z.array(layerSchema).max(5).optional().transform((v) => (v?.length ? v : (['ink'] as const))),
 
-  /** 反復。親の曲線に沿って n 個並べる */
-  count: num(1, 24, 1).transform((v) => Math.round(v)),
+  /**
+   * 反復。親の曲線に沿って n 個並べる。
+   *
+   * 上限 32 は実測から。向日葵の紋は花弁 26 枚、縄の輪の撚りは数十本あり、
+   * 24 では足りなかった。32 枚のヴェシカは 64 シェイプになるので、
+   * DSL の上限（96）と釣り合う。
+   */
+  count: num(1, 32, 1).transform((v) => Math.round(v)),
   /** 反復を散らす角度の幅。0 なら同心に外へ重ねる */
   spread: num(0, 340, 0),
   /** 同心反復の間隔（ペン幅に対する比）。2 なら線 1 本ぶんの隙間があく */
   pitch: num(1, 8, 2),
   /** 反復の端で size を何倍にするか（1 で一定） */
   taper: num(0.2, 2, 1),
+  /**
+   * vesica 専用。長さ ÷ 幅。1.4 が既定（ほぼ木の葉）、4 以上で細い花弁になる。
+   *
+   * 以前は 2 円のずれ量を比例体系から決めていたので、細長さが 1.38:1 に固定
+   * されていた。向日葵や桜の花弁は実物で 4:1 前後あり、固定のままでは
+   * どの花弁も豆になる。
+   */
+  slender: num(1, 8, 1.4),
   /** limb 専用。先端の半径が付け根の何倍か（1 で一定太さ） */
   tip: num(0.05, 1, 0.4),
   /** limb 専用。長さが付け根の半径の何倍か */
@@ -632,9 +646,9 @@ function shapeFor(
   r0: number,
   pen: number,
   span: number,
-  ratio: Figure['ratio'],
   tip = 0.4,
   length = 3,
+  slender = 1.4,
   /** 白の縁取りを作るために、全方向へこれだけ太らせた版を出す */
   grow = 0,
 ): { shapes: Shape[]; ref: string } {
@@ -699,14 +713,22 @@ function shapeFor(
     }
 
     case 'vesica': {
-      // 2 円の交差。ずれ量が鋭さを決める
-      const d = round((r / ladderStep(ratio)) / 2)
+      // 2 円の交差。size は半分の長さで、slender が長さ ÷ 幅を決める。
+      //
+      //   L = 半分の長さ = size、W = 半分の幅 = L / slender
+      //   2 円の半径 R と中心のずれ d は L² = R² − d²、W = R − d から出る
+      //
+      // 生成円の半径を size とする書き方だと、細長さが 1.38:1 に固定される。
+      const L = Math.max(r, 1e-6)
+      const W = Math.max(L / slender, pen * 0.3)
+      const R = round((L * L + W * W) / (2 * W))
+      const d = round(R - W)
       const nx = -Math.sin(rad(c.angle))
       const ny = Math.cos(rad(c.angle))
       return {
         shapes: [
-          { kind: 'circle', id: `${id}a`, cx: round(c.x - nx * d), cy: round(c.y - ny * d), r },
-          { kind: 'circle', id: `${id}b`, cx: round(c.x + nx * d), cy: round(c.y + ny * d), r },
+          { kind: 'circle', id: `${id}a`, cx: round(c.x - nx * d), cy: round(c.y - ny * d), r: R },
+          { kind: 'circle', id: `${id}b`, cx: round(c.x + nx * d), cy: round(c.y + ny * d), r: R },
         ],
         ref: `${id}G`,
       }
@@ -781,9 +803,9 @@ export function buildFromFigure(plan: FigurePlan): LogoDesign {
             r,
             pen,
             p.node.span,
-            parsed.ratio,
             p.node.tip,
             p.node.length,
+            p.node.slender,
             grow,
           )
           shapes.push(...out.shapes)

@@ -187,7 +187,7 @@ export const groupSchema = z.object({
 
 export const partSchema = z.object({
   id,
-  steps: z.array(stepSchema).min(1).max(64),
+  steps: z.array(stepSchema).min(1).max(96),
   fill: z.enum(['primary', 'secondary', 'accent']).default('primary'),
   mirror: z.enum(['none', 'vertical', 'horizontal']).default('none')
     .describe('vertical は x=0 を軸に左右対称化（半分だけ描いて反転できる）'),
@@ -215,9 +215,13 @@ export const designSchema = z.object({
   }),
   // 上限は「実用上ありえない規模」の線引き。ブーリアン演算は O(n²) 的に効くので、
   // 際限なく受け取るとブラウザが固まる。
-  shapes: z.array(shapeSchema).min(1).max(64),
+  //
+  // 64 から 96 へ上げた。花弁 26 枚の紋（向日葵）は、1 枚が 2 円のヴェシカなので
+  // それだけで 52 シェイプ要る。96 シェイプの構成で build は実測 90ms なので、
+  // 固まる水準からはまだ遠い。
+  shapes: z.array(shapeSchema).min(1).max(96),
   constraints: z.array(constraintSchema).max(128).default([]),
-  groups: z.array(groupSchema).max(32).default([]),
+  groups: z.array(groupSchema).max(48).default([]),
   parts: z.array(partSchema).min(1).max(16),
 })
 
