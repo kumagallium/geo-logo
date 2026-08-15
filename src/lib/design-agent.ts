@@ -1,4 +1,4 @@
-import { generateObject, type LanguageModel } from 'ai'
+import { generateObject, generateText, type LanguageModel } from 'ai'
 import { z } from 'zod'
 import {
   ARCHETYPE_FAMILIES,
@@ -6,7 +6,7 @@ import {
   buildFromArchetype,
 } from '../core/archetypes'
 import { buildFromComposition, compositionSchema } from '../core/composition'
-import { buildFromFigure, figureSchema } from '../core/figure'
+import { buildFromFigure, figureRequestSchema, figureSchema } from '../core/figure'
 import { buildFromOutline, outlineSchema } from '../core/outline'
 import { compile, type CompileResult, type LogoDesign } from '../core/index'
 import { islandsOf } from '../core/metrics'
@@ -276,7 +276,7 @@ function specFor(brief: string, mode: DesignMode): ModeSpec {
   }
   if (mode.kind === 'figure') {
     return {
-      schema: figureSchema,
+      schema: figureRequestSchema,
       system: FIGURE_SYSTEM_PROMPT,
       user: figureUserPrompt(brief),
       repair: (problems) => figureRepairPrompt(brief, problems),
@@ -312,6 +312,37 @@ function specFor(brief: string, mode: DesignMode): ModeSpec {
   }
 }
 
+/**
+ * 応答の中から JSON の本体を取り出す。
+ *
+ * プロンプトは「JSON のみ」と言ってあるが、コードフェンスや前置きが混ざる
+ * ことがある。最初の { から最後の } までを取る。
+ */
+function extractJson(text: string): unknown {
+  const body = text.replace(/^[\s\S]*?```(?:json)?/i, '').replace(/```[\s\S]*$/, '')
+  const src = body.includes('{') ? body : text
+  const start = src.indexOf('{')
+  const end = src.lastIndexOf('}')
+  if (start < 0 || end <= start) throw new Error(`JSON が見つからない: ${text.slice(0, 200)}`)
+  return JSON.parse(src.slice(start, end + 1))
+}
+
+/**
+ * 構造化出力が使えないスキーマか。
+ *
+ * Anthropic は「union 型の欄は 16 まで」「スキーマが複雑すぎる」で拒む。
+ * こちらのスキーマは弱いモデルの揺れを吸収するために union を多用している
+ * ので、素直な形に削っても届かないことがある。
+ *
+ * その場合はテキストで受けて、緩いスキーマで検証する。README の実測でも
+ * 構造化出力は設計の質を落としていた（一発成功 2/5 対 5/5）ので、
+ * 落とす経路ではなく本来の経路に近い。
+ */
+function isSchemaRejection(err: unknown): boolean {
+  const m = err instanceof Error ? err.message : String(err ?? '')
+  return /too complex|too many parameters|union types|schema/i.test(m) && !/statusCode/i.test(m)
+}
+
 const MAX_ATTEMPTS = 3
 
 /**
@@ -337,6 +368,8 @@ export async function designLogo(
   let lastPlan: unknown = null
   let lastError: unknown = null
   const spec = specFor(brief, mode)
+  // 構造化出力を拒むプロバイダーではテキストへ切り替える
+  let textMode = false
 
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const problems = attempts.at(-1)?.problems
@@ -344,15 +377,32 @@ export async function designLogo(
 
     let object: unknown
     try {
-      const generated = await generateObject({
-        model,
-        schema: spec.schema,
-        system: spec.system,
-        prompt,
-        maxOutputTokens: 4000,
-      })
-      object = generated.object
+      if (textMode) {
+        const generated = await generateText({
+          model,
+          system: spec.system,
+          prompt,
+          maxOutputTokens: 8000,
+        })
+        object = spec.schema.parse(extractJson(generated.text))
+      } else {
+        const generated = await generateObject({
+          model,
+          schema: spec.schema,
+          system: spec.system,
+          prompt,
+          maxOutputTokens: 4000,
+        })
+        object = generated.object
+      }
     } catch (err) {
+      // スキーマそのものを拒まれたら、以降はテキストで受ける。
+      // 生成が始まっていないので、この試行は数えない
+      if (!textMode && isSchemaRejection(err)) {
+        textMode = true
+        i--
+        continue
+      }
       // 認証エラーやレート制限を投げ直さずに再試行すると、同じ失敗を
       // 繰り返して本当の原因が見えなくなる。生成・検証の失敗だけ拾う。
       if (!isRetriableGenerationError(err)) throw err

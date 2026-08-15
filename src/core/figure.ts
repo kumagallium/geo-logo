@@ -240,6 +240,58 @@ export const figureSchema = z.object({
   nodes: z.array(figureNodeSchema).min(1).max(40),
 })
 
+/**
+ * 生成のときモデルへ渡すスキーマ。
+ *
+ * figureSchema はほとんどの欄を number | string | null の union にしてある。
+ * 弱いモデルが返す揺れ（数を文字列で返す、空欄に null を入れる）を吸収して
+ * 再試行の費用を避けるためで、これは実測で効いている。
+ *
+ * ところが Anthropic の構造化出力は union 型の欄数に上限があり（16）、
+ * 23 個で弾かれる。**頼むときは素直な型で頼み、受けるときは緩く受ける。**
+ * 素直な型のほうが、モデルにとっても仕様書として読みやすい。
+ *
+ * 欄の名前は figureSchema と同じなので、出力はそのまま通せる。
+ */
+const layerName = z.enum(['ink', 'paper'])
+
+export const figureRequestSchema = z.object({
+  name: z.string(),
+  concept: z.string(),
+  pose: z.string().optional(),
+  ratio: z.enum(['golden', 'silver', 'integer']).optional(),
+  pen: z.enum(['thin', 'regular', 'bold']).optional(),
+  nodes: z
+    .array(
+      z.object({
+        id: z.string(),
+        label: z.string().optional(),
+        form: z.enum(FIGURE_FORMS).optional(),
+        on: z.string().optional(),
+        grip: z.enum(GRIPS).optional(),
+        // 方角の言葉と角度の両方を受けるので、ここだけは union が要る
+        at: z.union([z.number(), z.string()]).optional(),
+        x: z.number().optional(),
+        y: z.number().optional(),
+        size: z.number().optional(),
+        angle: z.number().optional(),
+        span: z.number().optional(),
+        layers: z.array(layerName).optional(),
+        count: z.number().optional(),
+        spread: z.number().optional(),
+        pitch: z.number().optional(),
+        taper: z.number().optional(),
+        slender: z.number().optional(),
+        tip: z.number().optional(),
+        length: z.number().optional(),
+        outline: z.number().optional(),
+        mirror: z.boolean().optional(),
+      }),
+    )
+    .min(1)
+    .max(40),
+})
+
 export type Figure = z.infer<typeof figureSchema>
 export type FigurePlan = Figure & { palette?: LogoDesign['palette'] }
 
