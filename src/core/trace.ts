@@ -842,12 +842,19 @@ function arcThrough(p: Vec, t: number, q: Vec): { r: number; sweep: boolean } | 
  * （接線連続な 2 本組の円弧）で結び直す。本数は倍になるが、半径は
  * harmonizeRadii でまとめ直せる。
  */
-export function smoothJoints(segments: ContourSegment[]): ContourSegment[] {
+export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): ContourSegment[] {
   const n = segments.length
   if (n < 3) return segments
 
-  // 各アンカーでの接線。前の弧の出口と次の弧の入口を平均する
-  const dirs: number[] = []
+  // 各アンカーでの接線。前の弧の出口と次の弧の入口を平均する。
+  //
+  // ただし全アンカーを平均すると、角が 1 つ残らず丸まる。嘴・棘・鰭・尾の
+  // 切れ込みは、輪郭がそこで折れることそのものが形の手がかりなので、
+  // 消すと題材が読めない塊になる（実測: 魚の尾が団子になった）。
+  // 大きく折れているアンカーは意図された角と見なし、平均しない。
+  const enter: number[] = []
+  const exit: number[] = []
+  const limit = (cornerDegrees * Math.PI) / 180
   for (let i = 0; i < n; i++) {
     const prev = segments[(i - 1 + n) % n]
     const cur = segments[i]
@@ -856,15 +863,27 @@ export function smoothJoints(segments: ContourSegment[]): ContourSegment[] {
     const b = arcGeometry(cur, next)
     const inDir = a ? a.t1 : Math.atan2(cur.y - prev.y, cur.x - prev.x)
     const outDir = b ? b.t0 : Math.atan2(next.y - cur.y, next.x - cur.x)
-    dirs.push(Math.atan2(Math.sin(inDir) + Math.sin(outDir), Math.cos(inDir) + Math.cos(outDir)))
+    // 折れ角。-π〜π に畳んでから見る
+    const turn = Math.abs(Math.atan2(Math.sin(outDir - inDir), Math.cos(outDir - inDir)))
+    if (turn > limit) {
+      enter.push(inDir)
+      exit.push(outDir)
+      continue
+    }
+    const mean = Math.atan2(
+      Math.sin(inDir) + Math.sin(outDir),
+      Math.cos(inDir) + Math.cos(outDir),
+    )
+    enter.push(mean)
+    exit.push(mean)
   }
 
   const out: ContourSegment[] = []
   for (let i = 0; i < n; i++) {
     const from = segments[i]
     const to = segments[(i + 1) % n]
-    const t0 = dirs[i]
-    const t1 = dirs[(i + 1) % n]
+    const t0 = exit[i]
+    const t1 = enter[(i + 1) % n]
 
     const vx = to.x - from.x
     const vy = to.y - from.y
