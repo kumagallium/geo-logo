@@ -150,9 +150,27 @@ export function normalize(input: LogoDesign): NormalizeResult {
     return s
   }
 
-  // 同一制約を毎パス評価し、違反量の半分ずつ両側を寄せる（Position Based Dynamics 相当）
+  // 同一制約を毎パス評価し、違反量の半分ずつ両側を寄せる（Position Based Dynamics 相当）。
+  //
+  // 補正は「1 パスぶんをまとめてから」適用する（ヤコビ法）。制約ごとに即座へ
+  // 反映すると、同じ状態から評価されないので**制約の並び順が結果を変える**。
+  // 左右対称に組んだ設計でそれが露見した: tangent(eye, head) が head を動かして
+  // から tangent(eyeM, head) が評価され、耳の対が 0.0016 ずれた。関係方式は
+  // 対称を構成で保証することが売りなので、後段で崩れては意味がない。
+  // 補正は平均を採るので、そこからさらに半分に落とす必要はない。0.5 のままだと
+  // 収束が足りず、残差が 1.5e-3 まで残った（判定の閾値 1e-3 を超える）。
+  // 1.0 で 8.3e-6 まで下がる。
   for (let pass = 0; pass < SOLVER_PASSES; pass++) {
-    const relax = 0.5
+    const relax = 1
+    const deltas = new Map<Centered, { x: number; y: number; n: number }>()
+    const push = (s: Centered, x: number, y: number) => {
+      if (s.pinned) return
+      const d = deltas.get(s) ?? { x: 0, y: 0, n: 0 }
+      d.x += x
+      d.y += y
+      d.n++
+      deltas.set(s, d)
+    }
 
     for (const c of design.constraints) {
       switch (c.type) {
@@ -164,21 +182,21 @@ export function normalize(input: LogoDesign): NormalizeResult {
             c.mode === 'external'
               ? radiusOf(a) + radiusOf(b)
               : Math.abs(radiusOf(a) - radiusOf(b))
-          moveToDistance(a, b, target, relax)
+          collectDistance(a, b, target, relax, push)
           break
         }
         case 'concentric': {
           const a = pick(c.a, 'concentric')
           const b = pick(c.b, 'concentric')
           if (!a || !b) break
-          moveToDistance(a, b, 0, relax)
+          collectDistance(a, b, 0, relax, push)
           break
         }
         case 'onCircle': {
           const p = pick(c.point, 'onCircle')
           const circle = pick(c.circle, 'onCircle')
           if (!p || !circle) break
-          moveToDistance(p, circle, radiusOf(circle), relax)
+          collectDistance(p, circle, radiusOf(circle), relax, push)
           break
         }
         case 'align': {
@@ -187,35 +205,60 @@ export function normalize(input: LogoDesign): NormalizeResult {
             .filter((s): s is Centered => s !== null)
           if (members.length < 2) break
           const key = c.axis === 'x' ? 'cx' : 'cy'
-          const movable = members.filter((m) => !m.pinned)
           const anchor = members.find((m) => m.pinned)
           const target = anchor
             ? anchor[key]
             : members.reduce((sum, m) => sum + m[key], 0) / members.length
-          for (const m of movable) m[key] += (target - m[key]) * relax
+          for (const m of members) {
+            const d = (target - m[key]) * relax
+            if (key === 'cx') push(m, d, 0)
+            else push(m, 0, d)
+          }
           break
         }
       }
+    }
+
+    // 複数の制約に噛んでいるシェイプは、補正の平均を採る
+    for (const [s, d] of deltas) {
+      s.cx += d.x / d.n
+      s.cy += d.y / d.n
     }
   }
 
   // 解いたあと、端数をグリッドへ戻して見た目の数値を整える。
   // ただし丸めは制約を壊しうるので、1 シェイプずつ「制約の総誤差が悪化しないか」
   // を実測し、悪化するなら差し戻す。整数座標より幾何の正しさを優先する。
+  //
+  // 判定はすべて同じ土台（baseline の状態）に対して行い、採否を決めてから
+  // まとめて適用する。1 つずつ動かしながら判定すると、先に動かしたものが後の
+  // 判定に効いて、左右の対で採否が食い違う。
   const baseline = constraintError(design)
+  const accepted: Array<{ s: Centered; cx: number; cy: number; px: number; py: number }> = []
   for (const [, s] of centered) {
     if (s.pinned) continue
     const cx = snap(s.cx, coords, 0.015)
     const cy = snap(s.cy, coords, 0.015)
     if (!cx.changed && !cy.changed) continue
 
-    const prevX = s.cx
-    const prevY = s.cy
+    const px = s.cx
+    const py = s.cy
     s.cx = cx.value
     s.cy = cy.value
-    if (constraintError(design) > baseline + 1e-9) {
-      s.cx = prevX
-      s.cy = prevY
+    const ok = constraintError(design) <= baseline + 1e-9
+    s.cx = px
+    s.cy = py
+    if (ok) accepted.push({ s, cx: cx.value, cy: cy.value, px, py })
+  }
+  for (const a of accepted) {
+    a.s.cx = a.cx
+    a.s.cy = a.cy
+  }
+  // 個別には悪化しなくても、合わせると悪化することがある。そのときは全部戻す
+  if (accepted.length > 0 && constraintError(design) > baseline + 1e-9) {
+    for (const a of accepted) {
+      a.s.cx = a.px
+      a.s.cy = a.py
     }
   }
 
@@ -325,8 +368,19 @@ function unifyStrokeWidths(
   flush()
 }
 
-/** a,b の中心間距離を target に近づける。pinned 側は動かさない。 */
-function moveToDistance(a: Centered, b: Centered, target: number, relax: number) {
+/**
+ * a,b の中心間距離を target に近づける補正を積む。pinned 側は動かさない。
+ *
+ * その場で座標を書き換えず push へ渡すのは、1 パスの全制約を同じ状態から
+ * 評価するため。順序に依らない＝対称な設計が対称のまま解ける。
+ */
+function collectDistance(
+  a: Centered,
+  b: Centered,
+  target: number,
+  relax: number,
+  push: (s: Centered, x: number, y: number) => void,
+) {
   let dx = b.cx - a.cx
   let dy = b.cy - a.cy
   let dist = Math.hypot(dx, dy)
@@ -351,15 +405,10 @@ function moveToDistance(a: Centered, b: Centered, target: number, relax: number)
   const share = aFree && bFree ? 0.5 : 1
   const step = error * relax
 
-  if (aFree) {
-    a.cx += ux * step * share
-    a.cy += uy * step * share
-  }
-  if (bFree) {
-    b.cx -= ux * step * share
-    b.cy -= uy * step * share
-  }
+  if (aFree) push(a, ux * step * share, uy * step * share)
+  if (bFree) push(b, -ux * step * share, -uy * step * share)
 }
+
 
 export type Residual = { label: string; error: number }
 
