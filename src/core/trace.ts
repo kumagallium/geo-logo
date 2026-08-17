@@ -846,6 +846,21 @@ export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): Co
   const n = segments.length
   if (n < 3) return segments
 
+  // 接線がほぼ平行な継ぎ目では biarc の半径が発散する。**当てはめ側（fitPass）は
+  // 同じ基準で直線へ落としているのに、ここだけ素通しだった。** DSL の寸法上限
+  // （500）を超えると designSchema が拒み、その弧 1 本ではなく**設計ごと**
+  // コンパイルに失敗する（実測: 熊の顔の頬で r が 500 を超え、マークが消えた）。
+  // ほぼ平行なら実際に直線なので、直線として出す。
+  const xs = segments.map((s) => s.x)
+  const ys = segments.map((s) => s.y)
+  const straight =
+    Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys), 0.05) * 12
+  /** 半径が大きすぎる弧は直線として置く */
+  const arc = (to: ContourSegment, at: Vec, r: number, sweep: boolean): ContourSegment =>
+    r <= straight
+      ? { ...to, x: round(at.x), y: round(at.y), r: round(r), sweep }
+      : { ...to, x: round(at.x), y: round(at.y), r: undefined }
+
   // 各アンカーでの接線。前の弧の出口と次の弧の入口を平均する。
   //
   // ただし全アンカーを平均すると、角が 1 つ残らず丸まる。嘴・棘・鰭・尾の
@@ -913,7 +928,7 @@ export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): Co
 
     if (!joint) {
       const one = arcThrough(from, t0, to)
-      out.push(one ? { ...to, r: round(one.r), sweep: one.sweep } : { ...to, r: undefined })
+      out.push(one ? arc(to, to, one.r, one.sweep) : { ...to, r: undefined })
       continue
     }
 
@@ -922,12 +937,96 @@ export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): Co
     const a2 = arcThrough(to, t1 + Math.PI, joint)
     out.push(
       a1
-        ? { x: round(joint.x), y: round(joint.y), r: round(a1.r), sweep: a1.sweep }
+        ? arc({ x: joint.x, y: joint.y, sweep: a1.sweep }, joint, a1.r, a1.sweep)
         : { x: round(joint.x), y: round(joint.y), sweep: true },
     )
-    out.push(a2 ? { ...to, r: round(a2.r), sweep: !a2.sweep } : { ...to, r: undefined })
+    out.push(a2 ? arc(to, to, a2.r, !a2.sweep) : { ...to, r: undefined })
   }
   return out
+}
+
+/**
+ * マイターの上限（距離の何倍まで角を尖らせるか）。
+ *
+ * 角では 2 本の弧の外側が交わる点まで伸ばすのが厳密な等距離だが、鋭い角ほど
+ * 交点が遠くへ飛ぶ（嘴や尾の切れ込みは 20° を切る）。伸ばしきると弦が長く
+ * なりすぎて、当てはめた弧が半円へ丸められる。実用上はここで頭を落とす。
+ */
+const MITER_LIMIT = 2.5
+
+/**
+ * 閉じた輪郭を外側へ一定幅ふくらませる。
+ *
+ * 白の縁取り（キーライン）は「太らせた同じ形を先に抜いてから本体を置く」ことで
+ * 作る。抜く形が本体と**どこでも同じだけ離れている**必要があるので、点列を
+ * 太らせて当てはめ直すのではなく、**当てはめ済みの弧をそのまま等距離に移す**。
+ *
+ *  - アンカーは外向き法線へ動かす。角では前後の法線の二等分線へ、マイター長ぶん
+ *  - 弧の半径は、外へ膨らんでいれば +d、内へ凹んでいれば −d
+ *
+ * 本数も継ぎ目の対応も変わらないので、幅は構成上どこでも d になる。凹みが d より
+ * きつい所では外側の形が自分と交わるが、ブーリアンの側が解いてくれる。
+ */
+export function offsetContour(segments: ContourSegment[], distance: number): ContourSegment[] {
+  const n = segments.length
+  if (n < 3 || !(distance > 0)) return segments
+
+  // 内と外を決める。符号付き面積の向きがそのまま法線の向きになる
+  let area = 0
+  for (let i = 0; i < n; i++) {
+    const a = segments[i]
+    const b = segments[(i + 1) % n]
+    area += a.x * b.y - b.x * a.y
+  }
+  const orient = area >= 0 ? 1 : -1
+  /** 進行方向 t に対する外向きの単位法線 */
+  const outwardOf = (t: number): Vec => ({
+    x: orient * Math.sin(t),
+    y: -orient * Math.cos(t),
+  })
+
+  // 各アンカーの、入る側と出る側の外向き法線。smoothJoints と同じ読み方
+  const nIn: Vec[] = []
+  const nOut: Vec[] = []
+  for (let i = 0; i < n; i++) {
+    const prev = segments[(i - 1 + n) % n]
+    const cur = segments[i]
+    const next = segments[(i + 1) % n]
+    const a = arcGeometry(prev, cur)
+    const b = arcGeometry(cur, next)
+    nIn.push(outwardOf(a ? a.t1 : Math.atan2(cur.y - prev.y, cur.x - prev.x)))
+    nOut.push(outwardOf(b ? b.t0 : Math.atan2(next.y - cur.y, next.x - cur.x)))
+  }
+
+  const moved: Vec[] = segments.map((s, i) => {
+    let mx = nIn[i].x + nOut[i].x
+    let my = nIn[i].y + nOut[i].y
+    const len = Math.hypot(mx, my)
+    // 折り返し（180°）では二等分線が消える。入る側の法線で逃がす
+    if (len < 1e-9) return { x: s.x + nIn[i].x * distance, y: s.y + nIn[i].y * distance }
+    mx /= len
+    my /= len
+    const cos = mx * nIn[i].x + my * nIn[i].y
+    const reach = distance / Math.max(cos, 1 / MITER_LIMIT)
+    return { x: s.x + mx * reach, y: s.y + my * reach }
+  })
+
+  return segments.map((cur, i) => {
+    const at = moved[i]
+    const g = cur.r === undefined ? null : arcGeometry(segments[(i - 1 + n) % n], cur)
+    if (!g) return { ...cur, x: round(at.x), y: round(at.y) }
+    // 中心が内側にあれば外へ膨らんでいる。そちらは半径が増える
+    const nEnd = outwardOf(g.t1)
+    const convex = nEnd.x * (cur.x - g.cx) + nEnd.y * (cur.y - g.cy) > 0
+    const r = convex ? g.r + distance : g.r - distance
+    return {
+      x: round(at.x),
+      y: round(at.y),
+      // 凹みが縁取りよりきつい弧は、動かした端点どうしを直線で結ぶ
+      r: r > 1e-3 ? round(r) : undefined,
+      sweep: cur.sweep,
+    }
+  })
 }
 
 export type TraceOptions = {
@@ -1103,30 +1202,48 @@ export function mirrorAxis(points: Vec[], candidate?: number, tolerance = 0.02):
   // 軸はマーク全体で 1 つ。輪郭ごとの中心を軸にしてはいけない。
   // 十字の 4 つの抜きのように、個々は非対称でも対で対称という要素があり、
   // 自分の中心を軸とみなして反転すると別の形になる（実測: 一致率 96%→79%）。
-  const axis = candidate ?? (minX + maxX) / 2
   const cell = span * tolerance
   const key = (q: Vec) => `${Math.round(q.x / cell)}:${Math.round(q.y / cell)}`
   const grid = new Set(points.map(key))
 
-  let hit = 0
-  for (const q of points) {
-    const m = { x: 2 * axis - q.x, y: q.y }
-    // 折り返した点が、その周囲 1 マス以内に見つかれば一致とみなす
-    for (let dx = -1; dx <= 1 && hit === hit; dx++) {
+  const scoreAt = (axis: number): number => {
+    let hit = 0
+    for (const q of points) {
+      const m = { x: 2 * axis - q.x, y: q.y }
+      // 折り返した点が、その周囲 1 マス以内に見つかれば一致とみなす
       let found = false
-      for (let dy = -1; dy <= 1; dy++) {
-        if (grid.has(`${Math.round(m.x / cell) + dx}:${Math.round(m.y / cell) + dy}`)) {
-          found = true
-          break
+      for (let dx = -1; dx <= 1 && !found; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          if (grid.has(`${Math.round(m.x / cell) + dx}:${Math.round(m.y / cell) + dy}`)) {
+            found = true
+            break
+          }
         }
       }
-      if (found) {
-        hit++
-        break
+      if (found) hit++
+    }
+    return hit / points.length
+  }
+
+  // 軸を外接矩形の中央に決め打ちしない。片側の毛先が少し出ているだけで軸が
+  // ずれ、本当は対称なマークが非対称と判定される（実測: 生成した正面のゴリラ
+  // 3 枚のうち 2 枚が、中央だと 94〜96% で不合格、0.05〜0.06 ずらすと 99〜100%）。
+  // 候補が渡されていればそこだけ、無ければ中央の周りを探して最良を採る
+  const mid = (minX + maxX) / 2
+  let best = candidate ?? mid
+  let bestScore = scoreAt(best)
+  if (candidate === undefined) {
+    const reach = span * 0.04
+    const step = span * 0.005
+    for (let a = mid - reach; a <= mid + reach + 1e-9; a += step) {
+      const s = scoreAt(a)
+      if (s > bestScore + 1e-9) {
+        bestScore = s
+        best = a
       }
     }
   }
-  return hit / points.length >= 0.97 ? axis : null
+  return bestScore >= 0.97 ? round(best) : null
 }
 
 /**
