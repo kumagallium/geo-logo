@@ -9,6 +9,7 @@ import {
   contoursFromRaster,
   fidelity,
   reconstruct,
+  symmetrizeMask,
 } from './reconstruct'
 import { fitToModule, traceArcs } from './trace'
 
@@ -240,5 +241,68 @@ describe('生成画像で踏んだこと', () => {
     const radii = (s: typeof eyes[0]) =>
       s.kind === 'contour' ? s.segments.map((g) => g.r ?? 0).sort((a, b) => a - b) : []
     expect(radii(eyes[0])).toEqual(radii(eyes[1]))
+  })
+})
+
+describe('対称の強制', () => {
+  // 生成画像は画素ではほぼ対称なのに、輪郭のつながり方が左右で違うことがある。
+  // 輪郭を取り出してから直そうとしても位相が違うので無理。マスクを画素で対称化する
+  it('片側だけの橋があるマスクを、位相ごと対称にする', () => {
+    const S = 256
+    const g = canvas(S, (x, y) => {
+      if (!disc(128, 128, 100)(x, y)) return false
+      // 左右の目（白）
+      if (disc(96, 110, 18)(x, y) || disc(160, 110, 18)(x, y)) return false
+      // 右の目にだけ、外へ抜ける 2 画素の白い橋 ← 位相の非対称
+      if (y >= 109 && y <= 110 && x >= 160 && x <= 230) return false
+      return true
+    })
+    const mask = new Uint8Array(S * S)
+    for (let i = 0; i < mask.length; i++) mask[i] = g[i] < 128 ? 1 : 0
+    const sym = symmetrizeMask(mask, S, S)
+    expect(sym.axis).not.toBeNull()
+    // 完全に対称になっている
+    let mismatch = 0
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const mx = Math.round(2 * (sym.axis as number) - 1 - x)
+        if (mx >= 0 && mx < S && sym.ink[y * S + x] !== sym.ink[y * S + mx]) mismatch++
+      }
+    }
+    expect(mismatch).toBe(0)
+  })
+
+  it('非対称なマスクには手を出さない', () => {
+    const S = 128
+    // 右へ大きく寄った塊
+    const g = canvas(S, (x, y) => disc(90, 64, 30)(x, y) || (x > 40 && x < 60 && y > 30 && y < 40))
+    const mask = new Uint8Array(S * S)
+    for (let i = 0; i < mask.length; i++) mask[i] = g[i] < 128 ? 1 : 0
+    const sym = symmetrizeMask(mask, S, S)
+    expect(sym.axis).toBeNull()
+    expect(sym.ink).toBe(mask)
+  })
+
+  it('復元した設計が実際に対称になる', () => {
+    const S = 256
+    const g = canvas(S, (x, y) => {
+      if (!disc(128, 128, 100)(x, y)) return false
+      if (disc(96, 110, 18)(x, y) || disc(160, 110, 18)(x, y)) return false
+      if (y >= 109 && y <= 110 && x >= 160 && x <= 230) return false
+      return true
+    })
+    const d = buildFromContours(contoursFromRaster(g, S), { tolerance: 0.006 })
+    const built = build(designSchema.parse(d))
+    // 画素の鏡像一致（metrics の mirror と同じ見方）
+    const r = rasterizeGray(built, { size: 256 })
+    let same = 0
+    let n = 0
+    for (let y = 0; y < 256; y++) {
+      for (let x = 0; x < 128; x++) {
+        n++
+        if (r.gray[y * 256 + x] < 128 === r.gray[y * 256 + 255 - x] < 128) same++
+      }
+    }
+    expect(same / n).toBeGreaterThan(0.99)
   })
 })

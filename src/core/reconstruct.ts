@@ -239,6 +239,103 @@ export type RasterOptions = {
    * 四角になり、主題のほうが「抜き」として扱われる——**静かに壊れる**ので自動で直す。
    */
   invert?: boolean | 'auto'
+  /**
+   * 左右対称に寄せるか。既定は自動（対称と判定できたときだけ）。
+   *
+   * 生成画像は**画素ではほぼ対称なのに、輪郭のつながり方が左右で違う**ことがある
+   * ——片側だけ 1〜2 画素の橋で目が外周に繋がっている、など。輪郭を取り出して
+   * から対称にしようとしても、位相が違うので原理的に直らない（実測: 顔の白が
+   * 軸を 4 回横切り、右側の区間に相方が無かった）。**輪郭を取り出す前に、マスクを
+   * 画素で対称化する**。片側をもう片側に写すので、位相まで揃う。
+   */
+  symmetrize?: boolean | 'auto'
+}
+
+/**
+ * マスクの左右対称の軸を探し、対称なら片側を写して完全に対称にする。
+ *
+ * 軸は外接矩形の中央に決め打ちしない。片側の毛先が少し出るだけでずれる。
+ * 中央の周りを半画素刻みで探し、墨の一致が最も高い位置を採る。
+ * 一致が 97% に届かなければ対称ではないと見て何もしない。
+ */
+export function symmetrizeMask(
+  ink: Uint8Array,
+  width: number,
+  height: number,
+): { ink: Uint8Array; axis: number | null } {
+  // 戻り値の型を素の Uint8Array にそろえる（`new Uint8Array(ink)` は ArrayBufferLike）
+  let x0 = width
+  let x1 = -1
+  let y0 = height
+  let y1 = -1
+  let count = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!ink[y * width + x]) continue
+      count++
+      if (x < x0) x0 = x
+      if (x > x1) x1 = x
+      if (y < y0) y0 = y
+      if (y > y1) y1 = y
+    }
+  }
+  if (count < 64) return { ink, axis: null }
+
+  // 標本は間引く。全画素で軸を掃引すると大きい絵で秒単位になる
+  const stride = Math.max(1, Math.floor(Math.sqrt(count / 20000)))
+  // 「鏡像の位置に墨があるか」を、その周囲まで許して数える。生成画像は素で
+  // 数画素ずれているので、厳密一致だと本当は対称なマークが 96% 止まりで落ちる
+  // （実測: 正面のゴリラで厳密 96.4%、輪郭点の判定（許容 2%）では 100%）。
+  // 輪郭側と同じ 2% を画素に直して使う
+  const slack = Math.max(1, Math.round((x1 - x0) * 0.02))
+  const near = (x: number, y: number): boolean => {
+    for (let dy = -slack; dy <= slack; dy++) {
+      const yy = y + dy
+      if (yy < 0 || yy >= height) continue
+      for (let dx = -slack; dx <= slack; dx++) {
+        const xx = x + dx
+        if (xx >= 0 && xx < width && ink[yy * width + xx]) return true
+      }
+    }
+    return false
+  }
+  const score = (axis2: number): number => {
+    // axis2 は軸の 2 倍（半画素刻みを整数で扱う）。画素 x の鏡像は axis2 - 1 - x
+    let hit = 0
+    let seen = 0
+    for (let y = y0; y <= y1; y += stride) {
+      for (let x = x0; x <= x1; x += stride) {
+        if (!ink[y * width + x]) continue
+        seen++
+        if (near(axis2 - 1 - x, y)) hit++
+      }
+    }
+    return seen > 0 ? hit / seen : 0
+  }
+
+  const mid2 = x0 + x1 + 1
+  const reach = Math.max(2, Math.round((x1 - x0) * 0.08))
+  let best2 = mid2
+  let bestScore = score(mid2)
+  for (let a2 = mid2 - reach; a2 <= mid2 + reach; a2++) {
+    const s = score(a2)
+    if (s > bestScore + 1e-9) {
+      bestScore = s
+      best2 = a2
+    }
+  }
+  if (bestScore < 0.97) return { ink, axis: null }
+
+  // 左を右へ写す。どちらを正とするかは任意だが、揃えることが目的なので一貫させる
+  const out: Uint8Array = Uint8Array.from(ink)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const mx = best2 - 1 - x
+      if (mx < x) continue // 右側だけ書き換える
+      if (mx >= 0 && mx < width) out[y * width + mx] = ink[y * width + x]
+    }
+  }
+  return { ink: out, axis: best2 / 2 }
 }
 
 /** 縁が墨で埋まっているか。埋まっていれば白黒が逆に来ている */
@@ -281,11 +378,17 @@ export function contoursFromRaster(
     options.invert === undefined || options.invert === 'auto'
       ? looksInverted(gray, width, height, threshold)
       : options.invert
-  const isInk = flip
-    ? (x: number, y: number) => gray[y * width + x] >= threshold
-    : (x: number, y: number) => gray[y * width + x] < threshold
+  // いったん二値のマスクにする。対称化は画素で行うのでここが要る
+  let mask: Uint8Array = new Uint8Array(width * height)
+  for (let i = 0; i < mask.length; i++) {
+    mask[i] = (flip ? gray[i] >= threshold : gray[i] < threshold) ? 1 : 0
+  }
+  if (options.symmetrize !== false) {
+    const sym = symmetrizeMask(mask, width, height)
+    if (options.symmetrize === true || sym.axis !== null) mask = sym.ink
+  }
 
-  const loops = contoursFromMask(isInk, width, height)
+  const loops = contoursFromMask((x, y) => mask[y * width + x] === 1, width, height)
   if (loops.length === 0) return []
 
   // 生成画像には滲みやアンチエイリアスの取りこぼしが出る。**大きい塊に対して**
@@ -387,7 +490,9 @@ export function buildFromContours(
       const { segments: fit } = traceArcs(points, {
         toleranceRatio: wanted * relax,
         mirrorX: axis ?? undefined,
-        symmetry: axis !== null,
+        // マーク全体が対称なら、軸をまたぐ輪郭は判定を飛ばして対称に作る。
+        // 輪郭ごとの判定に任せると外周だけ対称で顔は非対称、という中途半端になる
+        symmetry: axis !== null ? 'force' : false,
         // 元の形が設計そのものなので、比例体系へは寄せない（寄せると壊れる）
         snapRadii: false,
       })
@@ -421,6 +526,27 @@ export function buildFromContours(
     shapes.forEach((s, i) => {
       if (s.kind === 'contour') s.segments = tuned.groups[i] as ContourSegment[]
     })
+
+    // 畳んだあとに、対をもう一度鏡像で揃える。
+    //
+    // 対は片方だけ当てて鏡像で作っているが、その後の畳み込みは輪郭ごとに
+    // 最寄りの代表値へ寄せるので、**同じ半径だった対が別々の値へ寄る**ことが
+    // ある（実測: 左右の目が 6 本ずつ鏡像で作られたのに、畳んだ後は 6 頂点中
+    // 0 しか相方が無かった）。畳むのは値を揃えるためなのに、対称を崩しては
+    // 本末転倒なので、畳んでから相方を作り直す
+    if (axis !== null) {
+      const byId = new Map(shapes.map((s, i) => [s.id, i]))
+      pairs.forEach((twin, i) => {
+        if (twin === null || twin >= i) return
+        const self = byId.get(`r${i}`)
+        const other = byId.get(`r${twin}`)
+        if (self === undefined || other === undefined) return
+        const src = shapes[other]
+        const dst = shapes[self]
+        if (src.kind !== 'contour' || dst.kind !== 'contour') return
+        dst.segments = mirrorSegments(src.segments, axis)
+      })
+    }
   }
 
   const steps: Step[] = [...placed]

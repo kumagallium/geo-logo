@@ -1042,10 +1042,11 @@ export type TraceOptions = {
   /** 目標の円弧本数。toleranceRatio があればそちらが優先される */
   maxArcs?: number
   /**
-   * 左右対称なら片側だけ当てはめて反転する。既定は有効。
+   * 左右対称なら片側だけ当てはめて反転する。既定は有効（輪郭ごとに判定）。
+   * 'force' で判定を飛ばし、mirrorX の軸で必ず対称に作る。
    * 軸はマーク全体で 1 つに決めて mirrorX で渡すこと。
    */
-  symmetry?: boolean
+  symmetry?: boolean | 'force'
   /** マーク全体の対称軸（x 座標） */
   mirrorX?: number
   /**
@@ -1077,15 +1078,20 @@ export type TraceResult = {
  * 鏡像になり、モデルの当てはめ結果が左右で食い違うことがなくなる。
  * 対称なモチーフでは、これが「作図した」形と「当てはめた」形の差になる。
  */
-function traceMirrored(points: Vec[], axis: number, options: TraceOptions): TraceResult | null {
-  const crossings = axisCrossings(points, axis)
-  // 単純な対称形は軸をちょうど 2 回横切る。それ以外は扱わない
-  if (crossings.length !== 2) return null
-
-  const [a, b] = crossings
-  const half = points.slice(a + 1, b + 1)
+/**
+ * 軸上で始まり軸上で終わる片側の区間を当てはめ、鏡像で戻して閉じる。
+ *
+ * 各セグメントは「1 つ前の点から、この点まで」を表す。
+ * 片側が  始点 → p1 → … → 終点（軸上）  なら、戻りは
+ *         終点 → mirror(p_{k-1}) → … → mirror(p1) → 始点
+ * となり、i 番目の戻り弧は k-i 番目の往き弧の鏡像になる。
+ */
+function mirrorClosedRun(
+  half: Vec[],
+  axis: number,
+  options: TraceOptions,
+): { outward: ContourSegment[]; back: ContourSegment[]; tolerance: number } | null {
   if (half.length < 8) return null
-
   // 端を軸の上へ載せる。ここがずれると継ぎ目が開く
   const onAxis = (q: Vec): Vec => ({ x: axis, y: q.y })
   const chain = [onAxis(half[0]), ...half.slice(1, -1), onAxis(half[half.length - 1])]
@@ -1093,14 +1099,9 @@ function traceMirrored(points: Vec[], axis: number, options: TraceOptions): Trac
   const fitted = traceArcs(chain, { ...options, symmetry: false })
   if (fitted.segments.length < 2) return null
 
-  // 各セグメントは「1 つ前の点から、この点まで」を表す。
-  // 片側が  始点 → p1 → … → 終点（軸上）  なら、戻りは
-  //         終点 → mirror(p_{k-1}) → … → mirror(p1) → 始点
-  // となり、i 番目の戻り弧は k-i 番目の往き弧の鏡像になる。
   const outward = fitted.segments
   const k = outward.length
   const start = chain[0]
-
   const back: ContourSegment[] = []
   for (let j = 0; j < k; j++) {
     const source = outward[k - 1 - j] // 鏡像のもとになる往きの弧
@@ -1115,17 +1116,42 @@ function traceMirrored(points: Vec[], axis: number, options: TraceOptions): Trac
       sweep: source.sweep,
     })
   }
+  return { outward, back, tolerance: fitted.tolerance }
+}
 
-  return { segments: [...outward, ...back], tolerance: fitted.tolerance }
+function traceMirrored(points: Vec[], axis: number, options: TraceOptions): TraceResult | null {
+  const crossings = axisCrossings(points, axis)
+  // 対称で穴の無い領域の外周は、軸をちょうど 2 回しか横切れない（2k 回横切る
+  // 閉曲線が対称なら、k 番目の右区間の鏡像は直後の左区間でなければならず、
+  // その終点が k 番目の始点に戻る＝2 回、と示せる）。4 回以上は**位相が非対称**
+  // ——片側だけ 1〜2 画素の橋で繋がっている——ので、輪郭単位では直せない。
+  // 復元側は輪郭を取り出す前にマスクを画素で対称化して、ここへ来る輪郭が必ず
+  // 2 回になるようにしている（reconstruct.ts の symmetrizeMask）
+  if (crossings.length !== 2) return null
+
+  const [a, b] = crossings
+  const half = points.slice(a + 1, b + 1)
+  const run = mirrorClosedRun(half, axis, options)
+  if (!run) return null
+  return { segments: [...run.outward, ...run.back], tolerance: run.tolerance }
 }
 
 export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResult {
   const maxArcs = Math.max(3, Math.min(options.maxArcs ?? 12, 64))
   if (points.length < 8) return { segments: [], tolerance: 0 }
 
-  // 対称なら片側だけ当てはめて反転する
+  // 対称なら片側だけ当てはめて反転する。
+  //
+  // 既定では輪郭ごとに対称かを判定するが、呼ぶ側が「マーク全体が対称」と決めて
+  // いるときは判定を飛ばして**強制**できる（symmetry: 'force'）。生成画像の
+  // 個々の輪郭は素でわずかに歪んでいて、判定（一致 97%）を落とすことがある。
+  // 判定に任せると、外周だけ対称で顔の白は非対称、という中途半端が出る
+  // （実測: 正面のゴリラ 3 枚で、輪郭 8 本のうち対称に作られたのは 2〜4 本）
   if (options.symmetry !== false) {
-    const axis = mirrorAxis(points, options.mirrorX)
+    const axis =
+      options.symmetry === 'force' && options.mirrorX !== undefined
+        ? options.mirrorX
+        : mirrorAxis(points, options.mirrorX)
     if (axis !== null) {
       const mirrored = traceMirrored(points, axis, options)
       if (mirrored) return mirrored
