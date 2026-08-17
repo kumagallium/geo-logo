@@ -17,6 +17,24 @@ import type { MiddlewareHandler } from 'hono'
  * 許可オリジンは既定で localhost の dev / api ポートのみ。別ホストから使う場合は
  * GEOLOGO_ALLOWED_ORIGINS にカンマ区切りで明示する。
  */
+/**
+ * デスクトップ版の画面の送信元。
+ *
+ * Tauri は画面を独自スキームで配る（macOS / Linux は tauri://localhost、Windows は
+ * http(s)://tauri.localhost）。同梱サーバーは 127.0.0.1 で待つので、画面から見ると
+ * **必ず cross-origin** になる。ここを許さないと、サイドカーは健康なのに画面は
+ * 「サーバーが居ない＝静的モード」と判定し、ブラウザから直接プロバイダーを叩いて
+ * CSP に阻まれる（v0.1.0 / v0.1.1 の実機で "Load failed"）。
+ *
+ * この origin は OS がアプリ自身にだけ割り当てるものなので、悪意あるページが
+ * 名乗ることはできない。Graphium も同じ 3 つを許している。
+ */
+export const DESKTOP_ORIGINS = [
+  'tauri://localhost',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+] as const
+
 export function originGuard(apiPort: number, devPort = 5173): MiddlewareHandler {
   const allowed = new Set<string>()
   for (const port of [devPort, apiPort]) {
@@ -27,8 +45,21 @@ export function originGuard(apiPort: number, devPort = 5173): MiddlewareHandler 
     const trimmed = extra.trim()
     if (trimmed) allowed.add(trimmed)
   }
+  const desktop = new Set<string>(DESKTOP_ORIGINS)
 
   return async (c, next) => {
+    const origin = c.req.header('Origin')
+
+    // デスクトップ版の画面だけは、Sec-Fetch-Site が cross-site でも通す。構造上
+    // 必ず cross-site なので、先に Sec-Fetch-Site で切ると必ず落ちる。Origin は
+    // ブラウザが付けるもので、ページの側では偽れない。
+    // GEOLOGO_ALLOWED_ORIGINS で足した送信元にはこの例外を与えない——別オリジン
+    // から使うなら proxy で同一オリジンに載せる、という従来の方針のまま
+    if (origin && desktop.has(origin)) {
+      await next()
+      return
+    }
+
     const site = c.req.header('Sec-Fetch-Site')
     if (site && site !== 'same-origin' && site !== 'none') {
       return c.json(
@@ -37,7 +68,6 @@ export function originGuard(apiPort: number, devPort = 5173): MiddlewareHandler 
       )
     }
 
-    const origin = c.req.header('Origin')
     if (origin && !allowed.has(origin)) {
       return c.json(
         {

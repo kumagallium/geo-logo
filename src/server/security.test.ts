@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { originGuard, securityHeaders } from './security'
+import { cors } from 'hono/cors'
+import { DESKTOP_ORIGINS, originGuard, securityHeaders } from './security'
 
 /**
  * ローカル API は API キーを保持し課金リクエストを送るので、
@@ -12,6 +13,8 @@ function makeApp() {
   const app = new Hono()
   app.use('/api/*', securityHeaders)
   app.use('/api/*', originGuard(8787, 5173))
+  // 本番と同じ並び。デスクトップ版の origin にだけ CORS を開ける
+  app.use('/api/*', cors({ origin: [...DESKTOP_ORIGINS], allowHeaders: ['Content-Type', 'X-API-Key'] }))
   app.get('/api/ping', (c) => c.json({ ok: true }))
   app.delete('/api/ping', (c) => c.json({ deleted: true }))
   return app
@@ -90,5 +93,47 @@ describe('securityHeaders', () => {
     expect(res.headers.get('X-Frame-Options')).toBe('DENY')
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
     expect(res.headers.get('Cache-Control')).toBe('no-store')
+  })
+})
+
+describe('デスクトップ版の送信元', () => {
+  // 画面は tauri://localhost から来て、サーバーは 127.0.0.1 で待つ。構造上 cross-origin。
+  // v0.1.0 / v0.1.1 の実機で、ここが 403 になって画面が静的モードに倒れていた
+  it('tauri://localhost からの GET は通り、CORS の応答ヘッダーが付く', async () => {
+    const res = await app.request('/api/ping', {
+      headers: { Origin: 'tauri://localhost', 'Sec-Fetch-Site': 'cross-site' },
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('access-control-allow-origin')).toBe('tauri://localhost')
+  })
+
+  it('preflight（OPTIONS）にも答える', async () => {
+    const res = await app.request('/api/ping', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'tauri://localhost',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type,x-api-key',
+      },
+    })
+    expect(res.status).toBe(204)
+    expect(res.headers.get('access-control-allow-origin')).toBe('tauri://localhost')
+    expect(res.headers.get('access-control-allow-headers')?.toLowerCase()).toContain('x-api-key')
+  })
+
+  it('Windows の tauri.localhost も通す', async () => {
+    for (const origin of ['http://tauri.localhost', 'https://tauri.localhost']) {
+      const res = await app.request('/api/ping', { headers: { Origin: origin, 'Sec-Fetch-Site': 'cross-site' } })
+      expect(res.status, origin).toBe(200)
+      expect(res.headers.get('access-control-allow-origin')).toBe(origin)
+    }
+  })
+
+  it('別サイトは引き続き拒否され、CORS も開かない', async () => {
+    const res = await app.request('/api/ping', {
+      headers: { Origin: 'https://evil.example', 'Sec-Fetch-Site': 'cross-site' },
+    })
+    expect(res.status).toBe(403)
+    expect(res.headers.get('access-control-allow-origin')).toBeNull()
   })
 })
