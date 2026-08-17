@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.1](https://github.com/kumagallium/geo-logo/compare/v0.1.0...v0.1.1) - 2026-08-17
+
+- fix: デスクトップ版で同梱サーバーの起動後にモードを見直す by @kumagallium in https://github.com/kumagallium/geo-logo/pull/15
+
 ## [v0.1.0](https://github.com/kumagallium/geo-logo/commits/v0.1.0) - 2026-08-17
 
 - 画像方式（絵を先に作り、作図を後から当てる）と、Pages ビルドの修復 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/10
