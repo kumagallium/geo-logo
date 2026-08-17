@@ -98,9 +98,11 @@ app.post('/design', async (c) => {
         seed,
       })
       const img = decodeGray(Buffer.from(png))
-      // 許容誤差・部品の残し方は CLI（scripts/reconstruct.ts）で当たりを取った値
+      // 許容誤差 0.008: 0.02 だと彫った眉や V 字の目が丸められ、絵の「切れ」が
+      // 消える（実測: 同じ絵で一致 92.4% → 95.4%、頂点 68 → 86 の増で済む）。
+      // マークの顔つきが商品なので、DSL が少し重くなるほうを取る
       return reconstruct(img.gray, img.width, img.height, {
-        tolerance: 0.02,
+        tolerance: 0.008,
         radii: 8,
         name: name.slice(0, 40),
       })
