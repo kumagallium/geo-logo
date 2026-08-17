@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.6](https://github.com/kumagallium/geo-logo/compare/v0.1.5...v0.1.6) - 2026-08-17
+
+- feat: 画像生成を自動有効化し、会話をブラッシュアップとして扱う by @kumagallium in https://github.com/kumagallium/geo-logo/pull/25
+
 ## [v0.1.5](https://github.com/kumagallium/geo-logo/compare/v0.1.4...v0.1.5) - 2026-08-17
 
 - feat: 画像先行の設計経路をアプリに組み込む（ローカル mflux → シルエット → 作図） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/23
