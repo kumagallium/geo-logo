@@ -7,11 +7,11 @@ import { aiErrorFromResponse } from '../../lib/ai-error'
 import { apiFetch } from '../../lib/api-base'
 
 export type ImageGenInfo = {
-  /** 未設定なら null */
+  /** 実際に使われるコマンド。使えない・切ってあるときは null */
   command: string | null
   size: number
-  /** この環境で動く見込みの既定コマンド（サーバーが環境を見て提案）。無ければ null */
-  suggestion: string | null
+  /** 出どころ: saved=明示保存 / env=環境変数 / auto=自動検出 / disabled=OFF / none=未検出 */
+  source: 'saved' | 'env' | 'auto' | 'disabled' | 'none'
 }
 
 export async function getImageGen(): Promise<ImageGenInfo> {
@@ -20,8 +20,18 @@ export async function getImageGen(): Promise<ImageGenInfo> {
   return (await res.json()) as ImageGenInfo
 }
 
-/** command を空・null にすると解除 */
-export async function saveImageGen(command: string | null, size?: number): Promise<void> {
+/** ON は自動検出へ戻す。OFF は自動検出に勝つ「切った」を書き残す */
+export async function setImageGenEnabled(enabled: boolean): Promise<void> {
+  const res = await apiFetch('api/image/config', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+  if (!res.ok) throw await aiErrorFromResponse(res, '画像生成の切り替えに失敗しました')
+}
+
+/** 明示コマンドの保存（高度な設定）。自動検出より優先される */
+export async function saveImageGenCommand(command: string, size?: number): Promise<void> {
   const res = await apiFetch('api/image/config', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },

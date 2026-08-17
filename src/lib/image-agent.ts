@@ -87,12 +87,17 @@ Output requirements — these are absolute:
 - Flat 2D. No perspective, no 3D, no drop shadow, no reflection.
 
 Design requirements:
+- This is a LOGO MARK for a brand, not an illustration. Reduce the subject to
+  its most iconic essence — the crop and simplification a professional identity
+  designer would choose (often just the head or the single most recognisable
+  part, unless the brief says otherwise).
 - The silhouette alone must identify the subject. If the interior white were
   removed, the outer shape should still read as the subject.
 - Separate overlapping parts with clean white gaps of consistent weight.
 - Use the white shapes as drawing: taper them, vary their weight, give them
   direction. Do not rely only on uniform outlines and round holes.
-- Bold, simple, few masses. It must stay readable at 16 pixels.`
+- Bold, simple, few chunky masses with smooth confident curves. No ragged or
+  noisy edges. It must stay readable at 16 pixels and work as an app icon.`
 }
 
 export type GeneratedImage = {

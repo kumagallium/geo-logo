@@ -715,6 +715,30 @@ body {
   cursor: pointer;
 }
 
+/* 設定内の補足文と ON/OFF 行（画像生成セクション） */
+.hint {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.hint code {
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 11px;
+  background: #f1f5f9;
+  padding: 1px 4px;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .persist input {
   margin-top: 2px;
 }

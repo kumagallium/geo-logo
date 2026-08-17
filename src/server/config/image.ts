@@ -2,10 +2,12 @@
 //
 // 画像先行の復元経路（絵 → シルエット → 作図）の入口。生成器はコマンド 1 本の
 // 約束（{out} へ PNG を書く）だけで繋がる（lib/image-agent.ts の command
-// プロバイダー）。ここではそのコマンドを data ディレクトリの image.json に持つ。
+// プロバイダー）。
 //
-// API キーと違い秘密ではないが、モデル設定と同じ場所に置くことで
-// 「アプリの設定はすべて GEOLOGO_DATA_DIR の下」を保つ。
+// **使える環境では黙って有効になる。** 幾何を言語モデルに書かせる経路とは
+// 仕上がりが段違いで、「設定画面でコマンドテンプレートを貼ると良くなる」は
+// 利用者に道具の内部事情を背負わせすぎる（実測: 何を入れる欄なのか全く
+// 伝わらなかった）。明示設定は上書きとして残し、既定は自動検出にする。
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -19,35 +21,58 @@ export type ImageGenConfig = {
   size?: number
 }
 
+/** どこから来た設定か。UI が「なぜ使えている / いない」を言えるようにする */
+export type ImageGenSource = 'saved' | 'env' | 'auto' | 'disabled' | 'none'
+
+type StoredImageGen = {
+  command?: string
+  size?: number
+  /** 明示的に切った印。自動検出より強い */
+  disabled?: boolean
+}
+
 function configPath(): string {
   return join(getDataDir(), 'image.json')
 }
 
-/**
- * 保存済みの設定を返す。無ければ環境変数 GEOLOGO_IMAGE_COMMAND を見る
- * （CLI・開発時はファイルを作らず env だけで試せる）。
- */
-export function getImageConfig(): ImageGenConfig | null {
+function readStored(): StoredImageGen | null {
   try {
-    const parsed = JSON.parse(readFileSync(configPath(), 'utf-8')) as ImageGenConfig
-    if (typeof parsed?.command === 'string' && parsed.command.includes('{out}')) {
-      return { command: parsed.command, size: numberOr(parsed.size, 512) }
-    }
+    const parsed = JSON.parse(readFileSync(configPath(), 'utf-8')) as StoredImageGen
+    return typeof parsed === 'object' && parsed !== null ? parsed : null
   } catch {
-    // ENOENT・破損は「未設定」として扱う。破損でモデル追加系と違い失うものが
-    // ないので、warn より未設定へ倒すほうが復帰が簡単
+    // ENOENT・破損は「未保存」。モデル設定と違い失うものがないので未保存へ倒す
+    return null
   }
-  const env = process.env.GEOLOGO_IMAGE_COMMAND
-  if (env?.includes('{out}')) return { command: env, size: 512 }
-  return null
 }
 
-/** null で削除。コマンドは {out} 必須（PNG の受け取り先が無いと成立しない） */
-export function setImageConfig(config: ImageGenConfig | null): void {
-  if (!config) {
-    rmSync(configPath(), { force: true })
-    return
+/**
+ * 実際に使う設定と、その出どころ。
+ *
+ * 優先順: 明示 OFF ＞ 保存済みコマンド ＞ 環境変数 ＞ 自動検出 ＞ 無し。
+ * 「切った」を自動検出より強くしないと、OFF にしても次の起動で復活する。
+ */
+export function resolveImageGen(): { config: ImageGenConfig | null; source: ImageGenSource } {
+  const stored = readStored()
+  if (stored?.disabled) return { config: null, source: 'disabled' }
+  if (typeof stored?.command === 'string' && stored.command.includes('{out}')) {
+    return {
+      config: { command: stored.command, size: numberOr(stored.size, 512) },
+      source: 'saved',
+    }
   }
+  const env = process.env.GEOLOGO_IMAGE_COMMAND
+  if (env?.includes('{out}')) return { config: { command: env, size: 512 }, source: 'env' }
+  const suggestion = suggestImageCommand()
+  if (suggestion) return { config: { command: suggestion, size: 512 }, source: 'auto' }
+  return { config: null, source: 'none' }
+}
+
+export function getImageConfig(): ImageGenConfig | null {
+  return resolveImageGen().config
+}
+
+/** 明示コマンドの保存。{out} 必須（PNG の受け取り先が無いと成立しない） */
+export function setImageConfig(config: ImageGenConfig): void {
   if (!config.command.includes('{out}')) {
     throw new Error('コマンドに {out} が要ります（そこへ PNG を書いてもらいます）')
   }
@@ -58,12 +83,26 @@ export function setImageConfig(config: ImageGenConfig | null): void {
   )
 }
 
+/**
+ * ON/OFF の切り替え。
+ * OFF は「切った」を書き残す（自動検出に勝つため）。ON は保存を消して
+ * 自動検出へ戻す（保存済みコマンドがあった場合も、それごと白紙に戻る——
+ * 上書きしたい人は改めて保存すればよい）。
+ */
+export function setImageGenEnabled(enabled: boolean): void {
+  if (enabled) {
+    rmSync(configPath(), { force: true })
+    return
+  }
+  writeFileSync(configPath(), JSON.stringify({ disabled: true }, null, 2), 'utf-8')
+}
+
 function numberOr(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.trunc(v) : fallback
 }
 
 /**
- * この Mac で使える既定コマンドの提案。
+ * この Mac で使える既定コマンドの提案（＝自動検出の実体）。
  *
  * mflux の量子化済み z-image-turbo（一度 mflux-save したもの）を想定する。
  * フル精度は読むだけで 27GB 級で、実測でマシン全体が固まった。量子化済みなら
@@ -72,11 +111,14 @@ function numberOr(v: unknown, fallback: number): number {
  *
  * 保存先は ~/.cache/geologo（空白なし）。コマンドは空白で語に割るので、
  * "Application Support" のような空白入りパスはテンプレートに入れられない。
+ *
+ * 量子化済みモデルが無いのに mflux だけあるときは提案しない。フル精度で
+ * 走ってマシンを固まらせるくらいなら、幾何経路に落ちるほうがまし。
  */
 export function suggestImageCommand(): string | null {
   const bin = join(homedir(), '.local', 'bin', 'mflux-generate-z-image-turbo')
   if (!existsSync(bin)) return null
   const saved = join(homedir(), '.cache', 'geologo', 'z-image-turbo-4bit')
-  const model = existsSync(saved) ? `--model ${saved} --base-model z-image-turbo ` : ''
-  return `${bin} ${model}--prompt-file {promptFile} --seed {seed} --width {size} --height {size} --steps 8 --output {out}`
+  if (!existsSync(saved)) return null
+  return `${bin} --model ${saved} --base-model z-image-turbo --prompt-file {promptFile} --seed {seed} --width {size} --height {size} --steps 8 --output {out}`
 }

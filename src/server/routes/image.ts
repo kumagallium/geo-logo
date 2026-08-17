@@ -10,30 +10,44 @@ import { decodeGray } from '../../core/png.js'
 import { reconstruct } from '../../core/reconstruct.js'
 import { errorBody } from '../../lib/ai-error-codes.js'
 import { generateSymbolImage } from '../../lib/image-agent.js'
-import { getImageConfig, setImageConfig, suggestImageCommand } from '../config/image.js'
+import {
+  getImageConfig,
+  resolveImageGen,
+  setImageConfig,
+  setImageGenEnabled,
+} from '../config/image.js'
 
 const app = new Hono()
 
 app.get('/config', (c) => {
-  const config = getImageConfig()
+  // 使える環境では自動で有効（source: 'auto'）。UI はコマンドを見せる必要が
+  // なく、「使えている / いない」と「なぜ」だけ言えればいい
+  const { config, source } = resolveImageGen()
   return c.json({
     command: config?.command ?? null,
     size: config?.size ?? 512,
-    // 未設定のとき UI が「この Mac ならこれで動く」を一発で入れられるように、
-    // サーバー側で環境を見て提案する（mflux の在処はサーバーしか知らない）
-    suggestion: suggestImageCommand(),
+    source,
   })
 })
 
 app.put('/config', async (c) => {
-  const body = await c.req.json<{ command?: string | null; size?: number }>()
+  const body = await c.req.json<{ command?: string | null; size?: number; enabled?: boolean }>()
   const command = body.command?.trim()
   try {
-    setImageConfig(command ? { command, size: body.size } : null)
+    if (command) {
+      // 明示コマンド（高度な設定）。自動検出より優先される
+      setImageConfig({ command, size: body.size })
+    } else if (typeof body.enabled === 'boolean') {
+      // ON/OFF。ON は自動検出へ戻し、OFF は「切った」を書き残す
+      setImageGenEnabled(body.enabled)
+    } else {
+      setImageGenEnabled(true) // 保存の取り消し＝自動検出へ
+    }
   } catch (err) {
     return c.json(errorBody(err), 400)
   }
-  return c.json({ message: command ? '画像生成器を設定しました' : '画像生成器を外しました' })
+  const { source } = resolveImageGen()
+  return c.json({ message: '画像生成の設定を更新しました', source })
 })
 
 /**
@@ -54,11 +68,16 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
 }
 
 app.post('/design', async (c) => {
-  const body = await c.req.json<{ brief?: string; seed?: number }>().catch(() => null)
+  const body = await c.req
+    .json<{ brief?: string; seed?: number; name?: string }>()
+    .catch(() => null)
   const brief = body?.brief?.trim()
   if (!brief || brief.length > 2000) {
     return c.json({ error: 'brief は 1〜2000 文字の文字列で指定してください' }, 400)
   }
+  // ブラッシュアップでは brief が会話の累積になり長くなる。名前は最初の
+  // 依頼（クライアントが渡す）を使い、題名が指示文の羅列にならないようにする
+  const name = body?.name?.trim() || brief
   const config = getImageConfig()
   if (!config) {
     return c.json({ error: '画像生成器が設定されていません', code: 'NO_IMAGE_GENERATOR' }, 409)
@@ -83,7 +102,7 @@ app.post('/design', async (c) => {
       return reconstruct(img.gray, img.width, img.height, {
         tolerance: 0.02,
         radii: 8,
-        name: brief.slice(0, 40),
+        name: name.slice(0, 40),
       })
     })
     // /api/design と同じ形で返す。クライアントは経路の違いを知らなくていい

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   compile,
   designFromReference,
@@ -54,6 +54,10 @@ export default function App() {
   const [shaping, setShaping] = useState<Shaping>(SHAPING)
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
+
+  // 候補 → 生成時の seed。絵の経路では「選んだ候補の seed + 変えた指示」で
+  // 構図を保ったまま磨けるので、どの案から磨くかを選択がそのまま伝える
+  const seedByDesign = useRef(new WeakMap<LogoDesign, number>())
 
   const refreshModels = useCallback(async () => {
     try {
@@ -149,17 +153,32 @@ export default function App() {
           return
         }
 
+        // 会話はブラッシュアップとして扱う。最新の一言だけを渡すと文脈が
+        // 消え、「シルバーバック感を出して」だけでは何の絵かも分からなくなる
+        // （実測: 利用者が毎回「ゴリラは維持しつつ」と書き足すはめになった）。
+        // このセッションでの依頼を古い順に積んだものをブリーフにする。
+        const history = active.messages.filter((m) => m.role === 'user').map((m) => m.text)
+        const brief = [...history, text].join('。\n')
+        const name = (history[0] ?? text).slice(0, 40)
+        // 磨く起点は「いま選んでいる候補」。その seed を 1 件目へ引き継ぐ
+        const baseSeed = seedByDesign.current.get(design)
+
         // できた候補から順に見せる。絵の経路は 1 件 30 秒級なので、全部を
         // 待ってから出すと数分間なにも起きない画面になる
         setCandidates([])
         let firstArrival = true
-        const results = await requestDesigns(text, CANDIDATE_COUNT, (r) => {
-          if (!r.ok) return
-          setCandidates((prev) => [...prev, r.design])
-          if (firstArrival) {
-            firstArrival = false
-            setDesign(r.design)
-          }
+        const results = await requestDesigns(brief, CANDIDATE_COUNT, {
+          baseSeed,
+          name,
+          onCandidate: (r) => {
+            if (!r.ok) return
+            if (r.seed !== undefined) seedByDesign.current.set(r.design, r.seed)
+            setCandidates((prev) => [...prev, r.design])
+            if (firstArrival) {
+              firstArrival = false
+              setDesign(r.design)
+            }
+          },
         })
         const ok = results.filter((r) => r.ok)
         if (ok.length === 0) {
@@ -187,7 +206,7 @@ export default function App() {
         setBusy(false)
       }
     },
-    [push, reference, shaping],
+    [push, reference, shaping, active.messages, design],
   )
 
   // 参照が付いているときは、つまみを変えるたびに引き直す
