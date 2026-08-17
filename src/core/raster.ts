@@ -1,65 +1,18 @@
-import { deflateSync } from 'node:zlib'
 import type { BuildResult } from './build'
 import { getPaper, resetProject } from './paper-setup'
 
 /**
- * 完成形を PNG へ焼く。
+ * 完成形を画素へ焼く。
  *
  * 視覚モデルに自分の出力を見せるために要る。これまでモデルは一度も自分の
  * 描いたものを見ていなかった。デザイナーは引いては見て直すが、その輪が
  * 閉じていない。
  *
  * SVG のラスタライザを依存に足すのは避け、paper の内外判定で画素を塗る。
- * ブラウザも不要で、テストからも呼べる。
+ * **ここには node 依存を置かない。** 計測（metrics.ts）が使うので UI からも
+ * 引かれる。PNG への符号化は zlib が要るため png.ts に分けてある——静的
+ * import で持ち込むと Pages 向けのブラウザビルドが落ちる（実測）。
  */
-
-const CRC_TABLE = (() => {
-  const t = new Int32Array(256)
-  for (let n = 0; n < 256; n++) {
-    let c = n
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
-    t[n] = c
-  }
-  return t
-})()
-
-function crc32(buf: Buffer): number {
-  let c = -1
-  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8)
-  return (c ^ -1) >>> 0
-}
-
-function chunk(type: string, data: Buffer): Buffer {
-  const len = Buffer.alloc(4)
-  len.writeUInt32BE(data.length)
-  const body = Buffer.concat([Buffer.from(type, 'ascii'), data])
-  const crc = Buffer.alloc(4)
-  crc.writeUInt32BE(crc32(body))
-  return Buffer.concat([len, body, crc])
-}
-
-/** グレースケール 8bit の PNG を組み立てる */
-export function encodeGrayPng(gray: Uint8Array, width: number, height = width): Buffer {
-  const ihdr = Buffer.alloc(13)
-  ihdr.writeUInt32BE(width, 0)
-  ihdr.writeUInt32BE(height, 4)
-  ihdr[8] = 8 // bit depth
-  ihdr[9] = 0 // color type: grayscale
-
-  // 各行の先頭にフィルタ種別バイト（0 = None）が要る
-  const raw = Buffer.alloc(height * (width + 1))
-  for (let y = 0; y < height; y++) {
-    raw[y * (width + 1)] = 0
-    Buffer.from(gray.subarray(y * width, (y + 1) * width)).copy(raw, y * (width + 1) + 1)
-  }
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ])
-}
 
 export type RasterOptions = {
   /** 一辺の画素数 */
@@ -132,12 +85,4 @@ export function rasterizeGray(
   }
 
   return { gray, size }
-}
-
-/**
- * ビルド結果を正方形の PNG にする。見るための絵なので、既定で縁を均す。
- */
-export function rasterize(built: BuildResult, options: RasterOptions = {}): Buffer {
-  const { gray, size } = rasterizeGray(built, { samples: 3, ...options })
-  return encodeGrayPng(gray, size)
 }

@@ -7,7 +7,7 @@
  */
 import 'dotenv/config'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { rasterize } from '../src/core/raster.js'
+import { rasterize } from '../src/core/png.js'
 import { createModel } from '../src/lib/create-model.js'
 import { refineLogo } from '../src/lib/refine-agent.js'
 import { fromEnv } from '../src/server/config/resolve-model.js'
