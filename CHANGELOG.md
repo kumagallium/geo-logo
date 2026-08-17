@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.8](https://github.com/kumagallium/geo-logo/compare/v0.1.7...v0.1.8) - 2026-08-17
+
+- fix: 画像プロンプトから題材バイアスを除く（眉・目・頭・esports を中立化） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/29
+
 ## [v0.1.7](https://github.com/kumagallium/geo-logo/compare/v0.1.6...v0.1.7) - 2026-08-17
 
 - feat: 彫りの深いハウススタイルを既定にし、トレースの丸めを減らす by @kumagallium in https://github.com/kumagallium/geo-logo/pull/27
