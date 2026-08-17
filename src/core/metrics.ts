@@ -30,8 +30,24 @@ export type Metrics = {
   strokes: number
   /** 塗り面積 / 外接矩形 */
   ink: number
+  /**
+   * 塗り面積 / 墨の凸包。えぐれの深さ。
+   *
+   * 「ぼてっとして見える」を数にしたもの。角（corners）は輪郭が何回折れるかを
+   * 数えるが、**浅い折れをいくら並べても塊は塊のまま**で、丸い団子と articulate
+   * したマークの区別が付かない。凸包との差は「どれだけ食い込んでいるか」を見る
+   * ので、塊かどうかが直接出る。
+   *
+   * 実測（samples/）: 縄 26% / ペガサス 44% / ジャッカル（輪郭）55% に対し、
+   * 熊 76% / 魚 81% / クローバー 84%。後者が「ぼてっと」と読まれる側。
+   */
+  solidity: number
   /** 左右対称度 0〜1。画素の鏡像一致で測る */
   mirror: number
+  /** 離れている墨の塊の面積比（大きい順）。1 要素なら 1 つながり */
+  islands: number[]
+  /** 白に囲まれた墨の数（瞳・覗き）。多いほど白が設計されている */
+  nests: number
 }
 
 /** 相対 8% で畳んだ種類数。kamon-stats の distinct と同じ規則。 */
@@ -136,11 +152,174 @@ export function mirrorScore(built: BuildResult, size = 128): number {
   return total > 0 ? Math.max(0, 1 - diff / (2 * total)) : 1
 }
 
+/**
+ * 墨の塊を、離れている単位に分けて面積比を返す（大きい順）。
+ *
+ * 「浮いた部品」は目で見て最も分かりやすい破綻なのに、機械判定が無かった。
+ * 設計側の `constraints` を見る判定（build.ts の unrelated）は、関係が宣言
+ * されていれば通してしまう。関係が宣言されていても、外接で 1 点しか触れて
+ * いなければ、目には別の物体に見える。
+ *
+ * ベクタの連結性ではなく画素で見るのはそのため。**見えているとおりに数える。**
+ *
+ * 4 近傍にするのは、斜めにしか触れていない画素を繋げないため。円どうしの
+ * 外接は接点を通る行で横に隣り合うので繋がる（実測でそうなった）。一方、
+ * 弧や棒の端が斜めに触れているだけのものは分かれる。
+ *
+ * 解像度の依存も測ってある。96 / 192 / 384 / 768 px で数えると、1% 以上の島は
+ * どの解像度でも同じ数になり、1% 未満の島だけが解像度に追随して増えた
+ *（ある生成物で 2 → 5 → 5 → 9）。毛ほどの幅のくびれで、目には繋がって見える。
+ */
+export function islandsOf(
+  built: BuildResult,
+  size = 96,
+): { islands: number[]; nests: number; detached: number[] } {
+  // 輪郭が 1 本なら島は 1 つしかありえない。画素を数えるのは
+  // 1 回 16〜64 ms かかるので（paper の contains を画素ごとに呼ぶ）、
+  // 数えるまでもない場合は先に返す。総当たりの検査で効く。
+  const subpaths = built.parts.reduce((n, p) => n + (p.pathData.match(/M/g)?.length ?? 0), 0)
+  if (subpaths <= 1) return { islands: subpaths === 1 ? [1] : [], nests: 0, detached: [] }
+
+  const { gray } = rasterizeGray(built, { size })
+  const N = size * size
+  const ink = (i: number) => gray[i] < 128
+
+  const near = (i: number): number[] => {
+    const x = i % size
+    const y = (i / size) | 0
+    const out: number[] = []
+    if (x > 0) out.push(i - 1)
+    if (x < size - 1) out.push(i + 1)
+    if (y > 0) out.push(i - size)
+    if (y < size - 1) out.push(i + size)
+    return out
+  }
+
+  // まず地（外側の白）を縁から塗る。ここに接していない白は「抜き」になる
+  const outside = new Uint8Array(N)
+  const queue: number[] = []
+  for (let x = 0; x < size; x++) {
+    for (const i of [x, x + (size - 1) * size]) if (!ink(i) && !outside[i]) (outside[i] = 1), queue.push(i)
+  }
+  for (let y = 0; y < size; y++) {
+    for (const i of [y * size, y * size + size - 1]) if (!ink(i) && !outside[i]) (outside[i] = 1), queue.push(i)
+  }
+  while (queue.length > 0) {
+    const i = queue.pop() as number
+    for (const j of near(i)) if (!ink(j) && !outside[j]) (outside[j] = 1), queue.push(j)
+  }
+
+  type Blob = { area: number; x0: number; y0: number; x1: number; y1: number }
+  const seen = new Uint8Array(N)
+  const exposed: Blob[] = []
+  let nests = 0
+  const stack: number[] = []
+
+  for (let start = 0; start < N; start++) {
+    if (seen[start] || !ink(start)) continue
+    const b: Blob = { area: 0, x0: size, y0: size, x1: -1, y1: -1 }
+    let touchesGround = false
+    stack.push(start)
+    seen[start] = 1
+    while (stack.length > 0) {
+      const i = stack.pop() as number
+      b.area++
+      const x = i % size
+      const y = (i / size) | 0
+      if (x < b.x0) b.x0 = x
+      if (x > b.x1) b.x1 = x
+      if (y < b.y0) b.y0 = y
+      if (y > b.y1) b.y1 = y
+      for (const j of near(i)) {
+        if (ink(j)) {
+          if (!seen[j]) {
+            seen[j] = 1
+            stack.push(j)
+          }
+        } else if (outside[j]) {
+          touchesGround = true
+        }
+      }
+    }
+    // 地に接していない墨は、白に囲まれた覗き（瞳・肋骨の間の点）。
+    // これは意図された造形なので、浮いた部品とは別に数える
+    if (touchesGround) exposed.push(b)
+    else nests++
+  }
+
+  const total = exposed.reduce((a, b) => a + b.area, 0)
+  if (total === 0) return { islands: [], nests, detached: [] }
+  exposed.sort((a, b) => b.area - a.area)
+
+  // 離れていること自体は失敗ではない。囲い（丸に三つ葉の丸）も、同心の
+  // 波紋も、触れていないのが正しい。咎めるべきは「横に転がっている」もの。
+  //
+  // 見分けは枠の重なりで付く。囲いと同心は互いの枠が入れ子になるが、
+  // 転がった塊は主役の枠の外に出る（実測: 同心の弧のマークは重なり 1.00、
+  // 頭と肋骨に割れた生成物は 0.19）。
+  const main = exposed[0]
+  const overlap = (b: Blob) => {
+    const w = Math.min(main.x1, b.x1) - Math.max(main.x0, b.x0)
+    const h = Math.min(main.y1, b.y1) - Math.max(main.y0, b.y0)
+    if (w <= 0 || h <= 0) return 0
+    const smaller = Math.min(
+      (main.x1 - main.x0) * (main.y1 - main.y0),
+      (b.x1 - b.x0) * (b.y1 - b.y0),
+    )
+    return smaller > 0 ? (w * h) / smaller : 0
+  }
+
+  return {
+    islands: exposed.map((b) => b.area / total),
+    nests,
+    detached: exposed.slice(1).filter((b) => overlap(b) < 0.5).map((b) => b.area / total),
+  }
+}
+
+/**
+ * 墨が自分の凸包をどれだけ埋めているか。
+ *
+ * 画素で測る。輪郭から求めると、離れた島や穴の扱いで別の話が混ざる。
+ * 96 px で足りる（島の判定と同じ理由で、比は解像度でほとんど動かない）。
+ */
+export function solidityOf(built: BuildResult, size = 96): number {
+  const { gray } = rasterizeGray(built, { size })
+  const points: { x: number; y: number }[] = []
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) if (gray[y * size + x] < 128) points.push({ x, y })
+  }
+  if (points.length < 3) return 0
+
+  // 凸包（Andrew の monotone chain）。画素は走査順に並んでいるので整列済み
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y)
+  const half = (src: typeof sorted) => {
+    const out: typeof sorted = []
+    for (const p of src) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop()
+      out.push(p)
+    }
+    return out.slice(0, -1)
+  }
+  const hull = [...half(sorted), ...half([...sorted].reverse())]
+
+  let area = 0
+  for (let i = 0; i < hull.length; i++) {
+    const p = hull[i]
+    const q = hull[(i + 1) % hull.length]
+    area += p.x * q.y - q.x * p.y
+  }
+  area = Math.abs(area) / 2
+  return area > 0 ? Math.min(points.length / area, 1) : 0
+}
+
 export function measure(design: LogoDesign, built: BuildResult): Metrics {
   const span = Math.max(built.artBounds.width, built.artBounds.height) || 1
   const { vertices, corners, contours } = shapeOf(built, span * 0.01)
   // 半径は外接半径で正規化する。家紋の計測と同じ土俵に乗せるため
   const norm = span / 2
+  const { islands, nests } = islandsOf(built)
   return {
     shapes: design.shapes.length,
     vertices,
@@ -149,7 +328,10 @@ export function measure(design: LogoDesign, built: BuildResult): Metrics {
     radii: distinctCount(radiiOf(design).map((r) => r / norm)),
     strokes: distinctCount(strokesOf(design).map((w) => w / norm)),
     ink: built.inkRatio,
+    solidity: solidityOf(built),
     mirror: mirrorScore(built),
+    islands,
+    nests,
   }
 }
 
@@ -159,6 +341,11 @@ export function formatMetrics(m: Metrics): string {
     `図形 ${String(m.shapes).padStart(3)} / 頂点 ${String(m.vertices).padStart(3)} / ` +
     `角 ${String(m.corners).padStart(3)} / 輪郭 ${String(m.contours).padStart(2)} / ` +
     `半径 ${m.radii} 種 / 線幅 ${m.strokes} 種 / ` +
-    `インク ${(m.ink * 100).toFixed(0)}% / 対称 ${(m.mirror * 100).toFixed(0)}%`
+    `インク ${(m.ink * 100).toFixed(0)}% / 塊 ${(m.solidity * 100).toFixed(0)}% / ` +
+    `対称 ${(m.mirror * 100).toFixed(0)}%` +
+    (m.nests > 0 ? ` / 覗き ${m.nests}` : '') +
+    (m.islands.length > 1
+      ? ` / 島 ${m.islands.length}（最小 ${(m.islands[m.islands.length - 1] * 100).toFixed(1)}%）`
+      : '')
   )
 }

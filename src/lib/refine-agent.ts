@@ -8,7 +8,7 @@ import {
   type Piece,
 } from '../core/composition'
 import { compile, type CompileResult } from '../core/index'
-import { rasterize } from '../core/raster'
+import { rasterize } from '../core/png'
 import {
   COMPOSITION_SYSTEM_PROMPT,
   compositionUserPrompt,

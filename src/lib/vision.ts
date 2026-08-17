@@ -114,3 +114,70 @@ export async function critique(
     fix: String(parsed.fix ?? '').slice(0, 300),
   }
 }
+
+/**
+ * 2 枚を並べて、どちらが主題として読めるかを選ばせる。
+ *
+ * 「0〜10 で採点」は判別しなかった。焼いた 29 枚を 8 通りの聞き方で 443 回
+ * 試した実測では、1〜5 の採点だと 29 枚中 27 枚が同じ 3 で、頭を丸ごと外した
+ * 版が全部入りと 1 点差、欠落 8 種すべてで基準を下回らず 0/8 だった。
+ *
+ * 一方「2 枚のうちどちらが読めるか」は、正解既知の 13 組で 26 回中 24 回
+ * 当てた（92%、A/B の偏りなし）。**採点ではなく順位付けなら使える。**
+ *
+ * 左右の偏りを消すため、呼ぶ側で 2 回（入れ替えて）聞くこと。
+ */
+export type Duel = { winner: 'A' | 'B' | null; why: string }
+
+export async function compare(
+  a: Buffer,
+  b: Buffer,
+  subject: string,
+  config: VisionConfig,
+  signal?: AbortSignal,
+): Promise<Duel> {
+  const prompt = [
+    `2 つの白黒のマークを見せます。どちらも「${subject}」を表そうとしたものです。`,
+    '',
+    '**どちらがより「その題材だ」と一目で分かるか**を選んでください。',
+    '好みではなく、題材が読めるかどうかで選びます。',
+    '',
+    '次の JSON だけを返してください。',
+    '{ "winner": "A" または "B", "why": "選んだ理由を 30 文字程度で" }',
+  ].join('\n')
+
+  const res = await fetch(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
+    signal,
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: 200,
+      temperature: 0,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'text', text: 'A:' },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${a.toString('base64')}` } },
+            { type: 'text', text: 'B:' },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${b.toString('base64')}` } },
+          ],
+        },
+      ],
+    }),
+  })
+  if (!res.ok) throw new Error(`視覚モデルの呼び出しに失敗しました（HTTP ${res.status}）`)
+
+  const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const parsed = extractJson(body.choices?.[0]?.message?.content ?? '') as {
+    winner?: string
+    why?: string
+  } | null
+  const w = String(parsed?.winner ?? '').trim().toUpperCase()
+  return {
+    winner: w === 'A' || w === 'B' ? (w as 'A' | 'B') : null,
+    why: String(parsed?.why ?? '').slice(0, 120),
+  }
+}

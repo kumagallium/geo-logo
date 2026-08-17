@@ -9,7 +9,7 @@
 import 'dotenv/config'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { compile } from '../src/core/index.js'
-import { rasterize } from '../src/core/raster.js'
+import { rasterize } from '../src/core/png.js'
 import { fromEnv } from '../src/server/config/resolve-model.js'
 
 const [file, subject = ''] = process.argv.slice(2)

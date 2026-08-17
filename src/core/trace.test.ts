@@ -578,4 +578,29 @@ describe('smoothJoints', () => {
     ]
     expect(smoothJoints(segs)).toEqual(segs)
   })
+
+  /**
+   * 全アンカーを平均すると角が 1 つ残らず丸まる。嘴・棘・鰭・尾の切れ込みは
+   * 折れていることそのものが形の手がかりなので、消すと題材が読めなくなる
+   *（実測: 魚の尾が団子になり、目の抜きまで演算が破綻した）。
+   */
+  const square: ContourSegment[] = [
+    { x: 1, y: -1, sweep: true },
+    { x: 1, y: 1, sweep: true },
+    { x: -1, y: 1, sweep: true },
+    { x: -1, y: -1, sweep: true },
+  ]
+
+  it('大きく折れたアンカーは角として残す', () => {
+    const out = smoothJoints(square)
+    // 角では接線が折れたままなので、区間は 1 本の直線で足りる（biarc にならない）
+    expect(out).toHaveLength(4)
+    for (const s of square) {
+      expect(out.some((t) => Math.abs(t.x - s.x) < 1e-6 && Math.abs(t.y - s.y) < 1e-6)).toBe(true)
+    }
+  })
+
+  it('閾値を上げれば従来どおり全部丸める', () => {
+    expect(smoothJoints(square, 999)).toHaveLength(8)
+  })
 })

@@ -12,7 +12,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { compile } from '../src/core/index.js'
 import { formatMetrics, measure } from '../src/core/metrics.js'
-import { encodeGrayPng, rasterizeGray } from '../src/core/raster.js'
+import { encodeGrayPng } from '../src/core/png.js'
+import { rasterizeGray } from '../src/core/raster.js'
 import { diagnose } from '../src/lib/design-agent.js'
 import { toDesign } from './plan.js'
 
@@ -30,7 +31,7 @@ for (const file of files) {
   const name = file.split('/').pop()?.replace(/\.json$/, '') ?? file
   try {
     const result = compile(toDesign(JSON.parse(readFileSync(file, 'utf8'))))
-    cells.push(rasterizeGray(result.built, { size: CELL }).gray)
+    cells.push(rasterizeGray(result.built, { size: CELL, samples: 3 }).gray)
     const problems = diagnose(result)
     console.log(`${name.padEnd(16)} ${formatMetrics(measure(result.design, result.built))}`)
     for (const p of problems) console.log(`${' '.repeat(17)}⚠ ${p.split('\n')[0]}`)
