@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.4](https://github.com/kumagallium/geo-logo/compare/v0.1.3...v0.1.4) - 2026-08-17
+
+- fix: デスクトップ版でモデル追加が 500 になる（保存先を GEOLOGO_DATA_DIR に従わせる） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/21
+
 ## [v0.1.3](https://github.com/kumagallium/geo-logo/compare/v0.1.2...v0.1.3) - 2026-08-17
 
 - fix: デスクトップ版から同梱サーバーへの fetch を HTTP プラグイン経由にする（mixed content 解消） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/19
