@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.2](https://github.com/kumagallium/geo-logo/compare/v0.1.1...v0.1.2) - 2026-08-17
+
+- fix: デスクトップ版の画面（tauri://localhost）を同梱サーバーが受け付ける by @kumagallium in https://github.com/kumagallium/geo-logo/pull/17
+
 ## [v0.1.1](https://github.com/kumagallium/geo-logo/compare/v0.1.0...v0.1.1) - 2026-08-17
 
 - fix: デスクトップ版で同梱サーバーの起動後にモードを見直す by @kumagallium in https://github.com/kumagallium/geo-logo/pull/15
