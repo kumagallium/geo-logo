@@ -19,6 +19,17 @@
     "updater:default",
     "process:allow-restart",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "http://127.0.0.1:8787/*"
+        },
+        {
+          "url": "http://localhost:8787/*"
+        }
+      ]
+    }
   ]
 }
