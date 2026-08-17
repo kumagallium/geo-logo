@@ -149,7 +149,18 @@ export default function App() {
           return
         }
 
-        const results = await requestDesigns(text, CANDIDATE_COUNT)
+        // できた候補から順に見せる。絵の経路は 1 件 30 秒級なので、全部を
+        // 待ってから出すと数分間なにも起きない画面になる
+        setCandidates([])
+        let firstArrival = true
+        const results = await requestDesigns(text, CANDIDATE_COUNT, (r) => {
+          if (!r.ok) return
+          setCandidates((prev) => [...prev, r.design])
+          if (firstArrival) {
+            firstArrival = false
+            setDesign(r.design)
+          }
+        })
         const ok = results.filter((r) => r.ok)
         if (ok.length === 0) {
           // 全滅したときは最初の失敗を見せる（同じ原因のことが多い）
@@ -158,7 +169,6 @@ export default function App() {
         }
         const designs = ok.map((r) => (r.ok ? r.design : samples[0]))
         setCandidates(designs)
-        setDesign(designs[0])
         const failed = results.length - ok.length
         push(
           {

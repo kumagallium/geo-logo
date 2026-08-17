@@ -47,7 +47,7 @@ export type ImageConfig = {
   /** 正方形の一辺 */
   size?: number
   /**
-   * 手元の生成器を呼ぶコマンド。`{prompt}` `{out}` `{size}` を差し替える。
+   * 手元の生成器を呼ぶコマンド。`{prompt}` `{out}` `{size}` `{seed}` を差し替える。
    *
    * ローカルの拡散モデルは道具ごとに API が違う（Draw Things・ComfyUI・mflux で
    * 三者三様）。宛先ごとにアダプタを書くと、道具を替えるたびにこちらを直す
@@ -55,6 +55,11 @@ export type ImageConfig = {
    * 約束させる。
    */
   command?: string
+  /**
+   * 乱数の種。候補を複数出すとき、これを変えないと全候補が同じ絵になる
+   * （拡散モデルは prompt + seed で決定的）。`{seed}` の差し替え値。
+   */
+  seed?: number
 }
 
 /** 無料枠があるほうを既定にする（Google AI Studio は 1 日 500 枚まで無償） */
@@ -104,7 +109,12 @@ export type GeneratedImage = {
  * 引用の壊れ方でしか失敗しなくなる。テンプレートを空白で割ってから語ごとに
  * 差し替えれば、プロンプトは最後まで 1 つの引数のまま運べる。
  */
-async function runCommand(template: string, prompt: string, size: number): Promise<Uint8Array> {
+async function runCommand(
+  template: string,
+  prompt: string,
+  size: number,
+  seed?: number,
+): Promise<Uint8Array> {
   const dir = mkdtempSync(join(tmpdir(), 'geologo-'))
   const out = join(dir, 'image.png')
   // プロンプトは複数行。引数で渡せない道具のために、ファイルでも渡せるようにする
@@ -119,6 +129,7 @@ async function runCommand(template: string, prompt: string, size: number): Promi
         .replaceAll('{promptFile}', promptFile)
         .replaceAll('{out}', out)
         .replaceAll('{size}', String(size))
+        .replaceAll('{seed}', String(seed ?? 0))
     const [bin, ...args] = parts.map(fill)
     if (!template.includes('{out}')) {
       throw new Error('コマンドに {out} が要ります（そこへ PNG を書いてもらいます）')
@@ -148,7 +159,7 @@ export async function generateSymbolImage(
 
   if (config.provider === 'command') {
     if (!config.command) throw new Error('GEOLOGO_IMAGE_COMMAND が設定されていません')
-    return { png: await runCommand(config.command, prompt, size), prompt }
+    return { png: await runCommand(config.command, prompt, size, config.seed), prompt }
   }
 
   const model =

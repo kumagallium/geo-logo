@@ -505,10 +505,96 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
             </button>
           )}
 
+          {mode === 'server' && <ImageGenSection />}
+
           <AboutSection />
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * 画像生成（ローカル）——絵から作図する経路の入口。
+ *
+ * 設定されていると、生成が「絵 → シルエット → 作図」の順で走る（構図と白の
+ * 切り方を画像モデルに任せ、幾何を後から当てる）。言語モデルに幾何を書かせる
+ * 経路より仕上がりが段違いなので、使える環境なら設定を促す。
+ *
+ * サーバーモード専用。ブラウザ（Pages）はコマンドを実行できない。
+ */
+function ImageGenSection() {
+  const [command, setCommand] = useState('')
+  const [suggestion, setSuggestion] = useState<string | null>(null)
+  const [configured, setConfigured] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  useEffect(() => {
+    void import('./image-source').then(async ({ getImageGen }) => {
+      try {
+        const info = await getImageGen()
+        setCommand(info.command ?? '')
+        setConfigured(Boolean(info.command))
+        setSuggestion(info.suggestion)
+      } catch {
+        // 読めない（旧サーバー等）ならセクションは出すが提案なし
+      }
+    })
+  }, [])
+
+  const save = useCallback(async (value: string) => {
+    setSaving(true)
+    setNote(null)
+    try {
+      const { saveImageGen } = await import('./image-source')
+      await saveImageGen(value.trim() || null)
+      setConfigured(Boolean(value.trim()))
+      setNote(value.trim() ? '保存しました。次の生成から絵の経路を使います' : '解除しました')
+    } catch (err) {
+      setNote(localizeAiError(err))
+    } finally {
+      setSaving(false)
+    }
+  }, [])
+
+  return (
+    <>
+      <h3>画像生成（ローカル）</h3>
+      <div className="field">
+        <span>
+          生成コマンド（{'{promptFile} {seed} {size} {out}'} を差し替えて実行。{'{out}'} へ PNG
+          を書けば何でも可）
+        </span>
+        <textarea
+          value={command}
+          rows={3}
+          placeholder="未設定（言語モデルの幾何経路で生成します）"
+          onChange={(e) => setCommand(e.target.value)}
+        />
+      </div>
+      <div className="about">
+        <button
+          type="button"
+          className="btn"
+          disabled={saving || (!command.trim() && !configured)}
+          onClick={() => void save(command)}
+        >
+          {command.trim() ? '保存' : '解除'}
+        </button>
+        {suggestion && suggestion !== command && (
+          <button
+            type="button"
+            className="btn btn--ghost"
+            disabled={saving}
+            onClick={() => setCommand(suggestion)}
+          >
+            この Mac の mflux を使う（推奨）
+          </button>
+        )}
+        {note && <span className="about__result">{note}</span>}
+      </div>
+    </>
   )
 }
 
