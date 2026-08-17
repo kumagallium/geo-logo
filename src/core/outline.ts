@@ -1,6 +1,14 @@
 import { z } from 'zod'
 import type { LogoDesign, Shape, Step } from './dsl'
-import { fitToModule, harmonizeRadii, smoothJoints, traceArcs, type Vec } from './trace'
+import {
+  fitToModule,
+  harmonizeRadii,
+  offsetContour,
+  smoothJoints,
+  traceArcs,
+  type ContourSegment,
+  type Vec,
+} from './trace'
 
 /**
  * 輪郭の通過点から作図する。
@@ -25,7 +33,27 @@ const num = (min: number, max: number, fallback: number) =>
       return Math.min(Math.max(n, min), max)
     })
 
+/** 書かれていなければ undefined を返す（＝上位の既定に従う） */
+const optNum = (min: number, max: number) =>
+  z
+    .union([z.number(), z.string(), z.null()])
+    .optional()
+    .transform((v) => {
+      const n = typeof v === 'string' ? Number.parseFloat(v) : v
+      if (typeof n !== 'number' || !Number.isFinite(n)) return undefined
+      return Math.min(Math.max(n, min), max)
+    })
+
 const pointSchema = z.object({ x: num(-10, 10, 0), y: num(-10, 10, 0) })
+
+/**
+ * キーラインの幅の上限（モジュール）。
+ *
+ * 点はどう書かれても 5 モジュール四方へ収められる（`prepare`）ので、モジュール
+ * 単位の幅はそのままマークに対する一定の比になる。0.5 はマークの 10% で、
+ * 実用にはありえない太さ。上限は暴走を止めるためだけに置く。
+ */
+const KEYLINE_MAX = 0.5
 
 /**
  * 円弧の当てはめの許容誤差（輪郭の大きさに対する比）。
@@ -63,6 +91,8 @@ export const outlineContourSchema = z.object({
   // **円弧に均す工程**のほうだった。人がラフを描くときも 20 点では足りない。
   // 円弧の本数は許容誤差で決まるので、点を増やしても作図の粗さは変わらない。
   points: z.array(pointSchema).min(4).max(64),
+  /** この輪郭だけキーラインの幅を変える。省略で全体の既定に従う */
+  keyline: optNum(0, KEYLINE_MAX),
 })
 
 export const outlineSchema = z.object({
@@ -85,6 +115,21 @@ export const outlineSchema = z.object({
    * ようにする。
    */
   polish: num(0.3, 3, 1),
+  /**
+   * 重なった部品を分ける白の筋の幅（モジュール）。0 で無し。
+   *
+   * 洗練された紋章ロゴが例外なく持っている操作。翼と胴、首と胸、顎と頬——
+   * 重なりの境目がどこも同じ太さの白で分かれている。これが無いと部品が
+   * 黒い塊へ溶ける。
+   *
+   * 関係方式の `outline` と同じ仕掛け（太らせた同じ形を先に抜いてから本体を
+   * 置く）だが、幅の基準が違う。あちらはペン幅の倍数で、こちらはモジュール。
+   * 輪郭方式にはペンが無く、幅は「マークに対して一定」であってほしいため。
+   *
+   * これを入れる前は、手で細長い `hole` を引いて白を作っていた。境目ごとに
+   * 座標を書くので幅が揃わず、輪郭を直すたびに引き直すことになっていた。
+   */
+  keyline: num(0, KEYLINE_MAX, 0),
 })
 
 export type OutlinePlan = z.infer<typeof outlineSchema> & { palette?: LogoDesign['palette'] }
@@ -222,22 +267,36 @@ export type OutlineStage = {
   dense: Vec[]
   /** 当てはめた円弧（半径を揃える前） */
   segments: ReturnType<typeof traceArcs>['segments']
+  /** 先に抜かれる縁取りの形。無い輪郭では空 */
+  keyline: ContourSegment[]
+}
+
+/** この輪郭に敷くキーラインの幅。抜きには要らない（もともと白なので） */
+function keylineOf(parsed: OutlinePlan, i: number): number {
+  const c = parsed.contours[i]
+  if (c.role === 'hole') return 0
+  return c.keyline ?? parsed.keyline
 }
 
 export function outlineStages(plan: OutlinePlan): OutlineStage[] {
   const parsed = outlineSchema.parse(plan)
   return prepare(parsed).map((points, i) => {
     const dense = interpolate(points)
+    const segments = traceArcs(dense, {
+      toleranceRatio: toleranceFor(points.length, parsed.polish),
+      mirrorX: parsed.symmetry ? 0 : undefined,
+      snapRadii: true,
+    }).segments
+    const width = keylineOf(parsed, i)
     return {
       label: parsed.contours[i].label || `輪郭 ${i + 1}`,
       role: parsed.contours[i].role,
       points,
       dense,
-      segments: traceArcs(dense, {
-        toleranceRatio: toleranceFor(points.length, parsed.polish),
-        mirrorX: parsed.symmetry ? 0 : undefined,
-        snapRadii: true,
-      }).segments,
+      segments,
+      // 完成形と同じ手順（継ぎ目を揃えてから等距離に移す）で作る。
+      // 半径を揃える前なので本番とは僅かにずれるが、幅を決めるには足りる
+      keyline: width > 0 ? offsetContour(smoothJoints(segments), width) : [],
     }
   })
 }
@@ -247,7 +306,8 @@ export function buildFromOutline(plan: OutlinePlan): LogoDesign {
   const fitted = prepare(parsed)
 
   const shapes: Shape[] = []
-  const steps: Step[] = []
+  /** 描けた輪郭。演算の順はキーラインを決めてからまとめて組む */
+  const drawn: { id: string; role: 'solid' | 'hole'; keyline: number }[] = []
   fitted.forEach((points, i) => {
     const dense = interpolate(points)
     // 本数ではなく許容誤差で切る。本数指定は冗長な弧を並べたうえ精度も落ちる
@@ -262,14 +322,15 @@ export function buildFromOutline(plan: OutlinePlan): LogoDesign {
     const segments = smoothJoints(fit)
     if (segments.length < 3) return
     shapes.push({ kind: 'contour', id: `o${i}`, segments })
-    steps.push({ op: parsed.contours[i].role === 'hole' ? 'sub' : 'add', ref: `o${i}` })
+    drawn.push({ id: `o${i}`, role: parsed.contours[i].role, keyline: keylineOf(parsed, i) })
   })
 
   if (shapes.length === 0) {
     // 却下せず、点をそのまま多角形として出す。形は粗いが空にはならない
+    // （多角形は等距離に移せないので、この経路ではキーラインを諦める）
     fitted.forEach((points, i) => {
       shapes.push({ kind: 'poly', id: `o${i}`, points })
-      steps.push({ op: parsed.contours[i].role === 'hole' ? 'sub' : 'add', ref: `o${i}` })
+      drawn.push({ id: `o${i}`, role: parsed.contours[i].role, keyline: 0 })
     })
   }
 
@@ -290,8 +351,34 @@ export function buildFromOutline(plan: OutlinePlan): LogoDesign {
     })
   }
 
-  // 塗りを先に全部足してから抜く。演算順で全体が消える事故を防ぐ
-  const ordered = [...steps.filter((s) => s.op === 'add'), ...steps.filter((s) => s.op === 'sub')]
+  // 白の縁取り（キーライン）。太らせた同じ形を先に抜いてから本体を置くと、
+  // 先に置かれた部品との境目に一定幅の白が残る。**順序がすべて**で、塗りを
+  // 全部足してから抜く従来の並べ方では、縁取りが後から来た部品まで削る。
+  //
+  // 半径を揃えたあとの形から作る。揃える前に作ると、本体だけが畳まれて
+  // 幅がばらつく（キーラインは畳みの対象に入れない）。
+  //
+  // 抜き（hole）は最後にまとめる。目や切れ込みは完成したシルエットに対して
+  // 開けるもので、あとから足される部品に埋められては困る。
+  const ordered: Step[] = []
+  drawn
+    .filter((d) => d.role === 'solid')
+    .forEach((d, i) => {
+      const shape = shapes.find((s) => s.id === d.id)
+      // 1 枚目の下には敷くものが無い。抜きから始めると何も生まれないので置かない
+      if (i > 0 && d.keyline > 0 && shape?.kind === 'contour') {
+        shapes.push({
+          kind: 'contour',
+          id: `${d.id}K`,
+          segments: offsetContour(shape.segments, d.keyline),
+        })
+        ordered.push({ op: 'sub', ref: `${d.id}K` })
+      }
+      ordered.push({ op: 'add', ref: d.id })
+    })
+  for (const d of drawn) {
+    if (d.role === 'hole') ordered.push({ op: 'sub', ref: d.id })
+  }
 
   return {
     name: parsed.name,
@@ -314,7 +401,9 @@ export function buildFromOutline(plan: OutlinePlan): LogoDesign {
 /** 円弧の本数と半径の種類。作図されているかを測る。 */
 export function outlineStats(design: LogoDesign): { arcs: number; radii: number } {
   const groups = design.shapes
-    .filter((s) => s.kind === 'contour')
+    // キーラインは本体の複製なので数に入れない。入れると本数が倍近くになり、
+    // 半径も ±幅 の分だけ増えて、作図の粗さが実際より悪く見える
+    .filter((s) => s.kind === 'contour' && !s.id.endsWith('K'))
     .map((s) => (s.kind === 'contour' ? s.segments : []))
   const arcs = groups.reduce((n, g) => n + g.length, 0)
   return { arcs, radii: harmonizeRadii(groups).radii.length }

@@ -90,6 +90,28 @@ stages.forEach((s, si) => {
     e.push(`<circle cx="${q.x.toFixed(1)}" cy="${q.y.toFixed(1)}" r="4" fill="none" stroke="${color}" stroke-width="1.6"/>`)
   }
 
+  // 先に抜かれる縁取り。本体からどれだけ離れているかが、そのまま白の幅になる
+  if (s.keyline.length > 0) {
+    const d = s.keyline.map((seg, i) => {
+      const q = at(0, seg)
+      if (i === 0) return `M ${q.x.toFixed(1)} ${q.y.toFixed(1)}`
+      const r = seg.r === undefined ? undefined : seg.r * scale
+      return r === undefined
+        ? `L ${q.x.toFixed(1)} ${q.y.toFixed(1)}`
+        : `A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 ${seg.sweep ? 1 : 0} ${q.x.toFixed(1)} ${q.y.toFixed(1)}`
+    })
+    const first = at(0, s.keyline[0])
+    const r0 = s.keyline[0].r === undefined ? undefined : s.keyline[0].r * scale
+    d.push(
+      r0 === undefined
+        ? `L ${first.x.toFixed(1)} ${first.y.toFixed(1)}`
+        : `A ${r0.toFixed(1)} ${r0.toFixed(1)} 0 0 ${s.keyline[0].sweep ? 1 : 0} ${first.x.toFixed(1)} ${first.y.toFixed(1)}`,
+    )
+    e.push(
+      `<path d="${d.join(' ')} Z" stroke="${color}" stroke-width="1" stroke-dasharray="4 3" fill="none" opacity="0.6"/>`,
+    )
+  }
+
   // ラフの点。番号が JSON の並び順
   s.points.forEach((p, i) => {
     const q = at(0, p)
