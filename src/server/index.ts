@@ -8,6 +8,7 @@ import { createModel } from '../lib/create-model.js'
 import { errorBody, noModelRegisteredBody } from '../lib/ai-error-codes.js'
 import { resolveModelConfig } from './config/resolve-model.js'
 import { listModels, setDataDir } from './config/models.js'
+import imageRoute from './routes/image.js'
 import modelsRoute from './routes/models.js'
 import { cors } from 'hono/cors'
 import { DESKTOP_ORIGINS, originGuard, securityHeaders } from './security.js'
@@ -93,6 +94,7 @@ app.get('/api/health', (c) =>
 )
 
 app.route('/api/models', modelsRoute)
+app.route('/api/image', imageRoute)
 
 const designRequest = z.object({
   brief: z.string().min(1).max(2000),

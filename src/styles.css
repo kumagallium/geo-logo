@@ -532,13 +532,22 @@ body {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   font: inherit;
   font-size: 13px;
   background: #fbfdff;
+}
+
+/* コマンドテンプレートは長い 1 行。折り返して全体が見えるように */
+.field textarea {
+  resize: vertical;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 12px;
+  word-break: break-all;
 }
 
 .required {

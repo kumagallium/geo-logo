@@ -121,6 +121,28 @@ describe('手元の生成器', () => {
     }
   })
 
+  it('{seed} を差し替える（候補ごとに絵を変える鍵）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'geologo-test-'))
+    const fixture = join(dir, 'fixture.png')
+    const record = join(dir, 'argv.txt')
+    // 生成器の代役：第 1 引数（= 差し替え後の {seed}）を記録して PNG を書く
+    const script = join(dir, 'gen.sh')
+    writeFileSync(fixture, encodeGrayPng(new Uint8Array(64 * 64).fill(0), 64))
+    writeFileSync(script, `#!/bin/sh\necho "$1" > ${record}\ncp ${fixture} "$2"\n`)
+    try {
+      await generateSymbolImage('熊', {
+        provider: 'command',
+        modelId: 'command',
+        apiKey: '',
+        command: `sh ${script} {seed} {out}`,
+        seed: 42,
+      })
+      expect(readFileSync(record, 'utf-8').trim()).toBe('42')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('{out} を書き忘れたら、そう言う', async () => {
     await expect(
       generateSymbolImage('熊', {

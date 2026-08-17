@@ -27,6 +27,11 @@ export function setDataDir(dir: string): void {
   migrated = false
 }
 
+/** 現在のデータディレクトリ。他の設定ファイル（画像生成器など）も同じ場所に置く */
+export function getDataDir(): string {
+  return dataDir
+}
+
 function modelsPath(): string {
   return join(dataDir, 'models.json')
 }
