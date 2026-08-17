@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.3](https://github.com/kumagallium/geo-logo/compare/v0.1.2...v0.1.3) - 2026-08-17
+
+- fix: デスクトップ版から同梱サーバーへの fetch を HTTP プラグイン経由にする（mixed content 解消） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/19
+
 ## [v0.1.2](https://github.com/kumagallium/geo-logo/compare/v0.1.1...v0.1.2) - 2026-08-17
 
 - fix: デスクトップ版の画面（tauri://localhost）を同梱サーバーが受け付ける by @kumagallium in https://github.com/kumagallium/geo-logo/pull/17
