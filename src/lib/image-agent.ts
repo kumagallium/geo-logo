@@ -87,21 +87,21 @@ Output requirements — these are absolute:
 - Flat 2D. No perspective, no 3D, no drop shadow, no reflection.
 
 Design requirements:
-- This is a LOGO MARK for a brand, not an illustration. Premium sports-team /
-  esports crest energy: confident, aggressive, instantly memorable.
-- Aggressive angular styling: straight chiseled cuts and sharp diagonal
-  negative-space slashes carve the features. Brow, eye and part separations
-  are faceted geometric planes with crisp corners — not soft rounded holes.
+- This is a LOGO MARK for a brand, not an illustration. Premium crest energy:
+  decisive, sharp, instantly memorable.
+- Angular styling: straight chiseled cuts and sharp diagonal negative-space
+  slashes carve the internal features. Internal separations are faceted
+  geometric planes with crisp corners — not soft rounded holes.
 - Mix long confident curves for the outer silhouette with hard straight cuts
   inside. The contrast between curve and cut is the style.
-- Reduce to the most iconic crop — often just the head or the single most
-  recognisable part — unless the brief says otherwise.
+- Reduce to the most iconic crop — the single most recognisable part of the
+  subject — unless the brief says otherwise.
 - The silhouette alone must identify the subject. Separate overlapping parts
   with clean white gaps of consistent weight.
 - Bold, simple, few chunky masses. No ragged or noisy edges. It must stay
   readable at 16 pixels and work as an app icon.
 - If the brief itself asks for a soft, gentle or friendly tone, relax the
-  aggressive cuts and follow the brief.`
+  cuts and follow the brief.`
 }
 
 export type GeneratedImage = {
