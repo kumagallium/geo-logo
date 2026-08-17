@@ -1,14 +1,22 @@
 {
   "identifier": "default",
   "description": "geo-logo デスクトップアプリの既定権限",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     {
       "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "binaries/geo-logo-server", "sidecar": true }]
+      "allow": [
+        {
+          "name": "binaries/geo-logo-server",
+          "sidecar": true
+        }
+      ]
     },
     "shell:allow-kill",
+    "updater:default",
     "process:allow-restart",
     "opener:default",
     "dialog:default"

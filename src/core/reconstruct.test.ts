@@ -128,12 +128,14 @@ describe('往復', () => {
   const design = (shapes: LogoDesign['shapes'], steps: Array<{ op: 'add' | 'sub'; ref: string }>) =>
     designSchema.parse({ name: '検査', concept: '検査', shapes, parts: [{ id: 'mark', steps }] })
 
-  it('円板は 98% 以上で戻る', () => {
+  // 往復は 512px を 2 回焼くので数秒かかる。既定の 5 秒だと他のテストと同じ
+  // プロセスで走ったときに時々超える（実測: 5.7 秒）。競合ではなく時間
+  it('円板は 98% 以上で戻る', { timeout: 30_000 }, () => {
     const d = design([{ kind: 'circle', id: 'a', cx: 0, cy: 0, r: 2 }], [{ op: 'add', ref: 'a' }])
     expect(roundTrip(d).fidelity).toBeGreaterThan(0.98)
   })
 
-  it('抜きのある形も戻る', () => {
+  it('抜きのある形も戻る', { timeout: 30_000 }, () => {
     const d = design(
       [
         { kind: 'circle', id: 'a', cx: 0, cy: 0, r: 2 },

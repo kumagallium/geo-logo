@@ -1,0 +1,34 @@
+name: tagpr
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  tagpr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: Songmu/tagpr@v1
+        id: tagpr
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # タグが作られたら、デスクトップのビルドを起こす。
+      # tagpr は GITHUB_TOKEN で push するので、release イベントからは workflow が
+      # 起動しない（GitHub の仕様）。ここから明示的に叩く必要がある
+      - name: Trigger desktop build
+        if: steps.tagpr.outputs.tag != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "New tag: ${{ steps.tagpr.outputs.tag }}"
+          gh workflow run "Desktop Build" -f release_tag="${{ steps.tagpr.outputs.tag }}"

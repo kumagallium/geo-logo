@@ -1,0 +1,16 @@
+# tagpr 設定ファイル
+# https://github.com/Songmu/tagpr
+
+[tagpr]
+# バージョニング対象ファイル。tagpr が両方の version フィールドを直接書き換える。
+#
+# package.json も列挙するのが要。Graphium で command による同期を試したところ、
+# command は「バージョン決定の直前」＝ versionFile 更新前に走るため、常に
+# 1 リリース古い値を読んでいた。表示バージョンは package.json 由来なので実害が出る。
+versionFile = src-tauri/tauri.conf.json,package.json
+# リリースブランチ
+releaseBranch = main
+# v プレフィックス付きタグ
+vPrefix = true
+# CHANGELOG を自動生成する
+changelog = true

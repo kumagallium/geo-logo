@@ -164,6 +164,26 @@ body {
   border-bottom: 1px solid #f3dcb4;
 }
 
+/* 更新の案内。1 行に収め、目立ちすぎない緑 */
+.banner--update {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #edf5ee;
+  color: #1f4d2b;
+  border-bottom: 1px solid #c5ddc8;
+}
+
+.banner__error {
+  color: var(--warn);
+}
+
+.btn--sm {
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
 /* ---- workspace ---- */
 .workspace {
   flex: 1;
@@ -466,6 +486,18 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.about {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.about__result {
+  color: var(--muted, #667);
 }
 
 .modal__body h3 {

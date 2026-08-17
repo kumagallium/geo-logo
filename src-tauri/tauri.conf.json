@@ -28,8 +28,28 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.icns", "icons/icon.ico"],
-    "externalBin": ["binaries/geo-logo-server"],
-    "resources": ["sidecar/server.mjs", "sidecar/node*"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/geo-logo-server"
+    ],
+    "resources": [
+      "sidecar/server.mjs",
+      "sidecar/node*"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://kumagallium.github.io/geo-logo/updater/latest.json",
+        "https://github.com/kumagallium/geo-logo/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkxNTA5QjNDMzYzNjZFRTIKUldUaWJqWTJQSnRRa2NHaThMZkN5bHhtSW9oL2taTCtLTW1aN2dNMk1FeVFEKzl2R05ndFNvSjMK"
+    }
   }
 }
