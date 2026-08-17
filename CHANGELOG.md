@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.5](https://github.com/kumagallium/geo-logo/compare/v0.1.4...v0.1.5) - 2026-08-17
+
+- feat: 画像先行の設計経路をアプリに組み込む（ローカル mflux → シルエット → 作図） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/23
+
 ## [v0.1.4](https://github.com/kumagallium/geo-logo/compare/v0.1.3...v0.1.4) - 2026-08-17
 
 - fix: デスクトップ版でモデル追加が 500 になる（保存先を GEOLOGO_DATA_DIR に従わせる） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/21
