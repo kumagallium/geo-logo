@@ -515,85 +515,141 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
 }
 
 /**
- * 画像生成（ローカル）——絵から作図する経路の入口。
+ * 画像生成（ローカル）——絵から作図する経路。
  *
- * 設定されていると、生成が「絵 → シルエット → 作図」の順で走る（構図と白の
- * 切り方を画像モデルに任せ、幾何を後から当てる）。言語モデルに幾何を書かせる
- * 経路より仕上がりが段違いなので、使える環境なら設定を促す。
+ * **使える環境では自動で有効**（サーバーが mflux と量子化済みモデルを検出）。
+ * ここに置くのは ON/OFF と「なぜ使えている / いない」だけ。コマンドテンプレート
+ * は高度な設定に畳む——何を入れる欄なのか利用者には伝わらない（実測）。
  *
  * サーバーモード専用。ブラウザ（Pages）はコマンドを実行できない。
  */
 function ImageGenSection() {
+  const [info, setInfo] = useState<import('./image-source').ImageGenInfo | null>(null)
   const [command, setCommand] = useState('')
-  const [suggestion, setSuggestion] = useState<string | null>(null)
-  const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
-  useEffect(() => {
-    void import('./image-source').then(async ({ getImageGen }) => {
-      try {
-        const info = await getImageGen()
-        setCommand(info.command ?? '')
-        setConfigured(Boolean(info.command))
-        setSuggestion(info.suggestion)
-      } catch {
-        // 読めない（旧サーバー等）ならセクションは出すが提案なし
-      }
-    })
+  const load = useCallback(async () => {
+    try {
+      const { getImageGen } = await import('./image-source')
+      const next = await getImageGen()
+      setInfo(next)
+      setCommand(next.command ?? '')
+    } catch {
+      // 旧サーバー等で読めなければセクションごと非表示（info が null のまま）
+    }
   }, [])
 
-  const save = useCallback(async (value: string) => {
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const toggle = useCallback(
+    async (enabled: boolean) => {
+      setSaving(true)
+      setNote(null)
+      try {
+        const { setImageGenEnabled } = await import('./image-source')
+        await setImageGenEnabled(enabled)
+        await load()
+        setNote(enabled ? '有効にしました' : '切りました（言語モデルの幾何経路になります）')
+      } catch (err) {
+        setNote(localizeAiError(err))
+      } finally {
+        setSaving(false)
+      }
+    },
+    [load],
+  )
+
+  const saveCommand = useCallback(async () => {
     setSaving(true)
     setNote(null)
     try {
-      const { saveImageGen } = await import('./image-source')
-      await saveImageGen(value.trim() || null)
-      setConfigured(Boolean(value.trim()))
-      setNote(value.trim() ? '保存しました。次の生成から絵の経路を使います' : '解除しました')
+      const { saveImageGenCommand } = await import('./image-source')
+      await saveImageGenCommand(command.trim())
+      await load()
+      setNote('保存しました')
     } catch (err) {
       setNote(localizeAiError(err))
     } finally {
       setSaving(false)
     }
-  }, [])
+  }, [command, load])
+
+  if (!info) return null
+  const enabled = info.command !== null
+  const detectable = info.source !== 'none'
+
+  const status = (() => {
+    switch (info.source) {
+      case 'auto':
+        return '使用中（この Mac の mflux を自動検出）'
+      case 'saved':
+        return '使用中（手動で設定したコマンド）'
+      case 'env':
+        return '使用中（環境変数 GEOLOGO_IMAGE_COMMAND）'
+      case 'disabled':
+        return '切ってあります（言語モデルの幾何経路で生成）'
+      case 'none':
+        return 'この Mac では使えません（mflux が見つかりません）'
+    }
+  })()
 
   return (
     <>
       <h3>画像生成（ローカル）</h3>
-      <div className="field">
-        <span>
-          生成コマンド（{'{promptFile} {seed} {size} {out}'} を差し替えて実行。{'{out}'} へ PNG
-          を書けば何でも可）
-        </span>
-        <textarea
-          value={command}
-          rows={3}
-          placeholder="未設定（言語モデルの幾何経路で生成します）"
-          onChange={(e) => setCommand(e.target.value)}
+      <p className="hint">
+        絵を先に作り、そこから作図する経路。仕上がりが段違いなので、使える環境では自動で有効になります。生成は
+        1 案 30 秒ほどかかり、できた順に候補へ並びます。
+      </p>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={saving || !detectable}
+          onChange={(e) => void toggle(e.target.checked)}
         />
-      </div>
-      <div className="about">
-        <button
-          type="button"
-          className="btn"
-          disabled={saving || (!command.trim() && !configured)}
-          onClick={() => void save(command)}
-        >
-          {command.trim() ? '保存' : '解除'}
-        </button>
-        {suggestion && suggestion !== command && (
+        画像生成を使う — <span className="hint">{status}</span>
+      </label>
+      {!detectable && (
+        <p className="hint">
+          ターミナルで <code>uv tool install mflux</code> を実行し、モデルを一度{' '}
+          <code>mflux-save --model z-image-turbo -q 4 --path ~/.cache/geologo/z-image-turbo-4bit</code>{' '}
+          で保存すると使えるようになります（約 5.5GB）。
+        </p>
+      )}
+      <details>
+        <summary className="hint">高度な設定（生成コマンドの上書き）</summary>
+        <div className="field">
+          <span>
+            {'{promptFile} {seed} {size} {out}'} を差し替えて実行。{'{out}'} へ PNG
+            を書けば何でも可
+          </span>
+          <textarea value={command} rows={3} onChange={(e) => setCommand(e.target.value)} />
+        </div>
+        <div className="about">
           <button
             type="button"
-            className="btn btn--ghost"
-            disabled={saving}
-            onClick={() => setCommand(suggestion)}
+            className="btn"
+            disabled={saving || !command.trim()}
+            onClick={() => void saveCommand()}
           >
-            この Mac の mflux を使う（推奨）
+            保存
           </button>
-        )}
-        {note && <span className="about__result">{note}</span>}
-      </div>
+          {info.source === 'saved' && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={saving}
+              onClick={() => void toggle(true)}
+            >
+              自動検出に戻す
+            </button>
+          )}
+        </div>
+      </details>
+      {note && <span className="about__result">{note}</span>}
     </>
   )
 }

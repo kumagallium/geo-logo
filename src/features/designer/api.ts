@@ -22,7 +22,15 @@ export type DesignResponse = {
  *                （lib/design-agent.ts）はどちらでも同じものを使う。
  */
 export type CandidateResult =
-  | { ok: true; design: LogoDesign; attempts: DesignResponse['attempts']; model: string }
+  | {
+      ok: true
+      design: LogoDesign
+      attempts: DesignResponse['attempts']
+      model: string
+      /** 絵の経路のみ。拡散モデルは prompt + seed で決定的なので、これを
+       *  引き継ぐと「選んだ案の構図を保ったまま指示だけ変える」ができる */
+      seed?: number
+    }
   | { ok: false; error: unknown }
 
 /**
@@ -39,14 +47,23 @@ export type CandidateResult =
  * onCandidate は 1 件できるたびに呼ぶ。絵の経路は 1 件 30 秒級なので、
  * 全部を待たせず、できた順に見せる。
  */
+export type RequestDesignsOptions = {
+  onCandidate?: (result: CandidateResult) => void
+  /** 選択中の候補の seed。1 件目に引き継ぎ、選んだ構図を保ったまま磨く */
+  baseSeed?: number
+  /** 題名に使う短い名前（brief は会話の累積で長くなる） */
+  name?: string
+}
+
 export async function requestDesigns(
   brief: string,
   count: number,
-  onCandidate?: (result: CandidateResult) => void,
+  options: RequestDesignsOptions = {},
 ): Promise<CandidateResult[]> {
+  const { onCandidate } = options
   const n = Math.max(1, count)
   const image = await imageGenAvailable()
-  if (image) return requestImageDesigns(brief, n, onCandidate)
+  if (image) return requestImageDesigns(brief, n, options)
 
   // 候補ごとに型の系統を割り当てる。同じプロンプトを N 回投げるとモデルは
   // ほぼ同じ型を選び、候補が重複して選ぶ意味がなくなる（実測）。
@@ -86,22 +103,31 @@ async function imageGenAvailable(): Promise<boolean> {
 async function requestImageDesigns(
   brief: string,
   count: number,
-  onCandidate?: (result: CandidateResult) => void,
+  options: RequestDesignsOptions,
 ): Promise<CandidateResult[]> {
   const results: CandidateResult[] = []
   for (let i = 0; i < count; i++) {
+    // 1 件目は選択中の候補の seed を引き継ぐ（構図を保って磨く）。
+    // 残りは seed 未指定＝サーバーが散らす（別の当たりを探す）
+    const seed = i === 0 ? options.baseSeed : undefined
     const result = await apiFetch('api/image/design', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ brief }),
+      body: JSON.stringify({ brief, seed, name: options.name }),
     })
       .then(async (res) => {
         if (!res.ok) throw await aiErrorFromResponse(res, '画像からの作図に失敗しました')
-        const json = (await res.json()) as DesignResponse
-        return { ok: true as const, design: json.design, attempts: json.attempts ?? [], model: json.model }
+        const json = (await res.json()) as DesignResponse & { seed?: number }
+        return {
+          ok: true as const,
+          design: json.design,
+          attempts: json.attempts ?? [],
+          model: json.model,
+          seed: json.seed,
+        }
       })
       .catch((error): CandidateResult => ({ ok: false, error }))
-    onCandidate?.(result)
+    options.onCandidate?.(result)
     results.push(result)
     // まだ 1 件もできていないのに失敗したなら、生成器そのものが壊れている
     // （コマンド不在・モデル不在）。残りも同じ失敗になるだけなので打ち切る

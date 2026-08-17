@@ -31,9 +31,7 @@ describe('画像先行の設計 API', () => {
     else process.env.GEOLOGO_IMAGE_COMMAND = savedEnv
   })
 
-  it('設定の往復（保存 → 取得 → 解除）', async () => {
-    expect(getImageConfig()).toBeNull()
-
+  it('設定の往復（保存 → 取得 → 自動検出へ戻す）', async () => {
     let res = await app.request('/config', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
@@ -43,16 +41,54 @@ describe('画像先行の設計 API', () => {
     expect(getImageConfig()?.command).toContain('{out}')
 
     res = await app.request('/config')
-    const info = (await res.json()) as { command: string | null }
+    const info = (await res.json()) as { command: string | null; source: string }
     expect(info.command).toContain('mygen')
+    expect(info.source).toBe('saved')
 
+    // command 無しの PUT は保存を消して自動検出へ戻す
     res = await app.request('/config', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ command: '' }),
     })
     expect(res.status).toBe(200)
-    expect(getImageConfig()).toBeNull()
+    const after = (await (await app.request('/config')).json()) as { source: string }
+    // この環境に mflux があれば auto、無ければ none。saved でないことが本質
+    expect(['auto', 'none']).toContain(after.source)
+  })
+
+  it('OFF は環境変数や自動検出より強い（切ったのに復活しない）', async () => {
+    process.env.GEOLOGO_IMAGE_COMMAND = 'envgen --output {out}'
+    // env がある状態でも、OFF を書き残せば使わない
+    let res = await app.request('/config', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    })
+    expect(res.status).toBe(200)
+    const info = (await (await app.request('/config')).json()) as {
+      command: string | null
+      source: string
+    }
+    expect(info.command).toBeNull()
+    expect(info.source).toBe('disabled')
+
+    // design も断られる
+    res = await app.request('/design', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief: 'ゴリラ' }),
+    })
+    expect(res.status).toBe(409)
+
+    // ON に戻すと env が効く
+    await app.request('/config', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    })
+    const back = (await (await app.request('/config')).json()) as { source: string }
+    expect(back.source).toBe('env')
   })
 
   it('{out} の無いコマンドは保存を断る', async () => {
@@ -64,7 +100,14 @@ describe('画像先行の設計 API', () => {
     expect(res.status).toBe(400)
   })
 
-  it('未設定で design を頼むと、そうと分かる形で断る', async () => {
+  it('使えない状態で design を頼むと、そうと分かる形で断る', async () => {
+    // 「未設定」は環境次第で自動検出に化ける（開発機に mflux がある）ので、
+    // OFF を明示して「使えない」を作る。CI でも開発機でも同じ答えになる
+    await app.request('/config', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    })
     const res = await app.request('/design', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
