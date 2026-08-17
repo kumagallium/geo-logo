@@ -7,12 +7,25 @@ import { designLogo, modeForVariant } from '../lib/design-agent.js'
 import { createModel } from '../lib/create-model.js'
 import { errorBody, noModelRegisteredBody } from '../lib/ai-error-codes.js'
 import { resolveModelConfig } from './config/resolve-model.js'
-import { listModels } from './config/models.js'
+import { listModels, setDataDir } from './config/models.js'
 import modelsRoute from './routes/models.js'
 import { cors } from 'hono/cors'
 import { DESKTOP_ORIGINS, originGuard, securityHeaders } from './security.js'
 
 const port = Number(process.env.GEOLOGO_PORT ?? 8787)
+
+/**
+ * モデルと API キーの保存先。
+ *
+ * デスクトップ版はアプリ本体（Rust）が OS 標準の app_data_dir を GEOLOGO_DATA_DIR で
+ * 渡す。これを尊重しないと既定の `process.cwd()/data` に書きにいくが、.app を
+ * Finder から起動するとサイドカーの cwd は「/」なので `/data` を作ろうとして
+ * ENOENT で落ち、モデル追加が 500 になる（実測のスタック: ensureDataDir →
+ * writeRawStored → addModel）。読み取り系（一覧・health）はディスクを触らないので
+ * 通ってしまい、「一覧は出るのに追加だけ失敗」という気付きにくい壊れ方になる。
+ */
+const dataDir = process.env.GEOLOGO_DATA_DIR?.trim()
+if (dataDir) setDataDir(dataDir)
 
 /** デスクトップ版のアプリ本体が渡すバージョン。単体起動なら dev。 */
 const appVersion = process.env.GEOLOGO_APP_VERSION ?? 'dev'

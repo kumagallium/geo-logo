@@ -83,14 +83,22 @@ app.post('/', async (c) => {
     return c.json({ error: 'The openai-compatible provider requires an API Base URL' }, 400)
   }
 
-  const model = addModel({
-    name: body.model_name,
-    provider,
-    modelId: body.model_id,
-    apiKey,
-    apiBase: apiBase ?? null,
-    rate: parseRate(body.rate),
-  })
+  // 永続化（ファイル書き込み / Keychain）は環境依存で失敗しうる。素通しすると
+  // Hono が本文なしの 500 を返し、原因が全く分からなくなる（実測: 保存先が
+  // 書けず ENOENT。一覧は読めるのに追加だけ 500 になった）。理由を本文へ通す。
+  let model
+  try {
+    model = addModel({
+      name: body.model_name,
+      provider,
+      modelId: body.model_id,
+      apiKey,
+      apiBase: apiBase ?? null,
+      rate: parseRate(body.rate),
+    })
+  } catch (err) {
+    return c.json(errorBody(err), 500)
+  }
   return c.json({ message: `Model '${model.name}' added`, id: model.id }, 201)
 })
 
@@ -106,14 +114,19 @@ app.put('/:id', async (c) => {
     rate?: RateBody | null
   }>()
 
-  const updated = updateModel(id, {
-    ...(body.model_name ? { name: body.model_name } : {}),
-    ...(body.provider ? { provider: body.provider } : {}),
-    ...(body.model_id ? { modelId: body.model_id } : {}),
-    ...(body.api_key ? { apiKey: body.api_key } : {}),
-    ...(body.api_base !== undefined ? { apiBase: body.api_base || null } : {}),
-    ...(body.rate ? { rate: parseRate(body.rate) } : {}),
-  })
+  let updated
+  try {
+    updated = updateModel(id, {
+      ...(body.model_name ? { name: body.model_name } : {}),
+      ...(body.provider ? { provider: body.provider } : {}),
+      ...(body.model_id ? { modelId: body.model_id } : {}),
+      ...(body.api_key ? { apiKey: body.api_key } : {}),
+      ...(body.api_base !== undefined ? { apiBase: body.api_base || null } : {}),
+      ...(body.rate ? { rate: parseRate(body.rate) } : {}),
+    })
+  } catch (err) {
+    return c.json(errorBody(err), 500)
+  }
 
   if (!updated) return c.json({ error: 'Model not found' }, 404)
   return c.json({ message: `Model '${updated.name}' updated` })
@@ -122,7 +135,11 @@ app.put('/:id', async (c) => {
 // モデル削除
 app.delete('/:id', (c) => {
   const id = c.req.param('id')
-  if (!removeModel(id)) return c.json({ error: 'Model not found' }, 404)
+  try {
+    if (!removeModel(id)) return c.json({ error: 'Model not found' }, 404)
+  } catch (err) {
+    return c.json(errorBody(err), 500)
+  }
   return c.json({ message: 'Model deleted' })
 })
 
