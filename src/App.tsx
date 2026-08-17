@@ -14,7 +14,9 @@ import { Candidates } from './features/designer/Candidates'
 import { Inspector } from './features/designer/Inspector'
 import { SvgPane } from './features/designer/SvgPane'
 import { listModels, type ModelSummary } from './features/settings/model-source'
+import { UpdateBanner } from './components/UpdateBanner'
 import { SettingsModal } from './features/settings/SettingsModal'
+import { initUpdater } from './lib/updater'
 import { loadSettings, setAiModelsAvailable } from './features/settings/store'
 import { localizeAiError, OPEN_SETTINGS_EVENT } from './lib/ai-error'
 import { detectRuntimeMode, type RuntimeMode } from './lib/runtime-mode'
@@ -69,6 +71,11 @@ export default function App() {
   useEffect(() => {
     void refreshModels()
   }, [refreshModels])
+
+  // デスクトップ版だけ、起動時と 24 時間ごとに更新を確認する
+  useEffect(() => {
+    initUpdater()
+  }, [])
 
   // AI 未設定ガード（lib/ai-error.ts）からの導線を受ける
   useEffect(() => {
@@ -211,6 +218,7 @@ export default function App() {
           </div>
         </header>
 
+        <UpdateBanner />
         {error && <div className="banner banner--error">{error}</div>}
         {'error' in result && <div className="banner banner--error">DSL エラー: {result.error}</div>}
 

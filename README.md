@@ -643,6 +643,33 @@ AI 設定のサブシステム（モデルレジストリ・Keychain・エラー
 `copilot-subscription` はローカル CLI の subprocess 起動が必要で静的配信では動かない
 ため、`claude-subscription` は規約上の理由で、いずれも移植していません。
 
+## リリース（デスクトップ版）
+
+Graphium と同じ流れです。
+
+```
+main へ merge  →  tagpr がリリース PR を作る（version と CHANGELOG を書き換え）
+                     ↓ merge
+                  タグ vX.Y.Z  →  Desktop Build が起動  →  Release に .dmg / .app.tar.gz
+                                                          latest.json（自動更新の案内）
+```
+
+- **tagpr**（`.tagpr` / `tagpr.yml`）が `package.json` と `tauri.conf.json` の version を
+  同時に書き換えます。片方だけだと表示バージョンがずれる（Graphium で実害）
+- **Desktop Build**（`desktop-build.yml`）は macOS Apple Silicon を組み、updater 用の
+  `.app.tar.gz` に署名して `latest.json` を Release と Pages（`public/updater/`）の
+  両方へ置きます。署名が取れなければ **latest.json を出さずに落ちます**——壊れた
+  案内を配らないため
+- **自動更新**（`src/lib/updater.ts`）は起動時と 24 時間ごとに `latest.json` を見て、
+  新しければ画面上部に「再起動して更新」を出します。設定画面の「このアプリに
+  ついて」から手でも確認できます。ブラウザ版では何もしません
+
+Apple の署名と公証は repo の secrets（`APPLE_*` 6 つ）が揃っていれば
+`tauri-action` が行います。無ければ署名なしで組みます（Gatekeeper の警告は出るが
+動く）。updater の鍵は `TAURI_SIGNING_PRIVATE_KEY`。**秘密鍵を失うと以後の更新に
+署名できず、配布済みのアプリが更新されなくなります**——`~/.tauri/geo-logo.key` を
+別の場所にも控えてください。
+
 ## GitHub Pages
 
 `main` への push で `.github/workflows/deploy.yml` がビルドして Pages へデプロイします。

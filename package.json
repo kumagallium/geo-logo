@@ -29,6 +29,8 @@
     "@ai-sdk/openai-compatible": "^2.0.67",
     "@hono/node-server": "^1.13.7",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
     "ai": "^6.0.253",
     "hono": "^4.13.2",
     "paper": "^0.12.18",

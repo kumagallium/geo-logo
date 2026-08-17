@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { localizeAiError } from '../../lib/ai-error'
+import { isTauri } from '../../lib/api-base'
+import { checkForUpdates, getAppVersion, type CheckResult } from '../../lib/updater'
 import {
   API_BASE_HINTS,
   PROVIDERS,
@@ -494,8 +496,69 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
               保存済みキーを localStorage から削除
             </button>
           )}
+
+          <AboutSection />
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * このアプリについて——版と、手での更新確認。
+ *
+ * デスクトップ版は起動時と 24 時間ごとに自動で確認するが、「いま最新か」を
+ * 自分で確かめたいことがある。ブラウザ版では更新の概念が無いので、版だけ出す。
+ */
+function AboutSection() {
+  const [version, setVersion] = useState<string>('…')
+  const [result, setResult] = useState<CheckResult | null>(null)
+  const [checking, setChecking] = useState(false)
+  const desktop = isTauri()
+
+  useEffect(() => {
+    void getAppVersion().then(setVersion)
+  }, [])
+
+  const check = useCallback(async () => {
+    setChecking(true)
+    setResult(null)
+    try {
+      setResult(await checkForUpdates())
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+
+  const message = (() => {
+    if (!result) return null
+    switch (result.status) {
+      case 'up-to-date':
+        return '最新です'
+      case 'available':
+        return `v${result.version} があります。画面上部の案内から更新できます`
+      case 'unsupported':
+        return 'ブラウザ版は更新の確認をしません'
+      case 'error':
+        return `確認できませんでした: ${result.message}`
+    }
+  })()
+
+  return (
+    <>
+      <h3>このアプリについて</h3>
+      <div className="about">
+        <span>
+          geo-logo <strong>v{version}</strong>
+          {desktop ? '（デスクトップ版）' : '（ブラウザ版）'}
+        </span>
+        {desktop && (
+          <button type="button" className="btn btn--ghost" onClick={check} disabled={checking}>
+            {checking ? '確認中…' : '更新を確認'}
+          </button>
+        )}
+        {message && <span className="about__result">{message}</span>}
+      </div>
+    </>
   )
 }
