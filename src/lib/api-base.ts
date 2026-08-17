@@ -28,3 +28,24 @@ export function apiBase(): string {
 export function apiUrl(path: string): string {
   return `${apiBase()}${path.replace(/^\/+/, '')}`
 }
+
+/**
+ * サイドカー宛の fetch。
+ *
+ * デスクトップ版の画面は tauri://localhost（セキュアコンテキスト）から配られる。
+ * そこから http://127.0.0.1:8787 への **素の fetch は mixed content でブロック**
+ * される（実測: WebView から TypeError: Load failed、XHR は status 0。CSP を
+ * 完全に外しても再現するので CSP ではない）。Tauri の HTTP プラグインは Rust 側で
+ * リクエストを実行するので、WebView の mixed content 制限を受けない。
+ *
+ * ブラウザ版（Pages / dev）は素の fetch のまま——同一オリジンなので mixed content
+ * にならず、プラグインも存在しない。
+ */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = apiUrl(path)
+  if (isTauri()) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+    return tauriFetch(url, init)
+  }
+  return fetch(url, init)
+}

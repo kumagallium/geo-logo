@@ -1,4 +1,4 @@
-import { apiUrl, isTauri } from './api-base'
+import { apiFetch, isTauri } from './api-base'
 
 /**
  * デスクトップ版のバックエンド（同梱 Node + Hono）の起動と健全性確認。
@@ -24,7 +24,7 @@ type Health = { ok?: boolean; pid?: number; version?: string }
 
 async function fetchHealth(signal?: AbortSignal): Promise<Health | null> {
   try {
-    const res = await fetch(apiUrl('api/health'), {
+    const res = await apiFetch('api/health', {
       headers: { accept: 'application/json' },
       signal,
     })

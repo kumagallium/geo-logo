@@ -6,7 +6,7 @@
 // UI はこのモジュールだけを見る。Graphium の設定画面が
 // 「Tauri/Node ならサーバー、Web なら localStorage」を分岐していたのと同じ役割。
 
-import { apiUrl } from '../../lib/api-base'
+import { apiFetch } from '../../lib/api-base'
 import { aiErrorFromResponse } from '../../lib/ai-error'
 import type { ModelConfig, TokenRate } from '../../lib/model-config'
 import { fetchAvailableModels } from '../../lib/provider-models'
@@ -52,7 +52,7 @@ export type ModelInputFromSource = Omit<ModelInput, 'apiKey' | 'apiBase'> & {
   apiBase?: string | null
 }
 
-const api = (path: string) => apiUrl(`api${path}`)
+const apiPath = (path: string) => `api${path}`
 
 export async function currentMode(): Promise<RuntimeMode> {
   return detectRuntimeMode()
@@ -63,7 +63,7 @@ export async function listModels(): Promise<ModelSummary[]> {
     return getLLMModels().map(toSummaryFromLocal)
   }
 
-  const res = await fetch(api('/models'))
+  const res = await apiFetch(apiPath('/models'))
   if (!res.ok) throw await aiErrorFromResponse(res, 'モデル一覧の取得に失敗しました')
   const body = (await res.json()) as {
     models: Array<{
@@ -125,7 +125,7 @@ export async function addModel(input: ModelInput, persistKey = false): Promise<v
     return
   }
 
-  const res = await fetch(api('/models'), {
+  const res = await apiFetch(apiPath('/models'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -162,7 +162,7 @@ export async function addModelFromSource(
     return
   }
 
-  const res = await fetch(api('/models'), {
+  const res = await apiFetch(apiPath('/models'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -186,7 +186,7 @@ export async function fetchProviderModelsFromSource(sourceModelId: string): Prom
     return fetchAvailableModels(source.provider, source.apiKey, source.apiBase ?? undefined)
   }
 
-  const res = await fetch(api('/models/available'), {
+  const res = await apiFetch(apiPath('/models/available'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ source_model_id: sourceModelId }),
@@ -202,7 +202,7 @@ export async function updateModel(id: string, input: Partial<ModelInput>): Promi
     return
   }
 
-  const res = await fetch(api(`/models/${id}`), {
+  const res = await apiFetch(apiPath(`/models/${id}`), {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -222,7 +222,7 @@ export async function removeModel(id: string): Promise<void> {
     removeLLMModel(id)
     return
   }
-  const res = await fetch(api(`/models/${id}`), { method: 'DELETE' })
+  const res = await apiFetch(apiPath(`/models/${id}`), { method: 'DELETE' })
   if (!res.ok) throw await aiErrorFromResponse(res, 'モデルの削除に失敗しました')
 }
 
@@ -239,7 +239,7 @@ export async function fetchProviderModels(
     return fetchAvailableModels(provider, apiKey, apiBase)
   }
 
-  const res = await fetch(api('/models/available'), {
+  const res = await apiFetch(apiPath('/models/available'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ provider, api_key: apiKey, api_base: apiBase }),
