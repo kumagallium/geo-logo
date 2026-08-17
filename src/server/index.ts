@@ -9,7 +9,8 @@ import { errorBody, noModelRegisteredBody } from '../lib/ai-error-codes.js'
 import { resolveModelConfig } from './config/resolve-model.js'
 import { listModels } from './config/models.js'
 import modelsRoute from './routes/models.js'
-import { originGuard, securityHeaders } from './security.js'
+import { cors } from 'hono/cors'
+import { DESKTOP_ORIGINS, originGuard, securityHeaders } from './security.js'
 
 const port = Number(process.env.GEOLOGO_PORT ?? 8787)
 
@@ -46,11 +47,24 @@ startParentWatchdog()
 
 const app = new Hono()
 
-// CORS は張らない。ブラウザからは Vite の proxy 経由で同一オリジンとして届くため
-// 不要で、開けると任意のサイトからこのローカル API を叩けるようになる。
-// 代わりに送信元を検査する。
+// CORS は原則として張らない。ブラウザからは Vite の proxy 経由で同一オリジンとして
+// 届くため不要で、開けると任意のサイトからこのローカル API を叩けるようになる。
+// 代わりに送信元を検査する（originGuard）。
+//
+// 例外がデスクトップ版。画面が tauri://localhost から来るので構造上 cross-origin
+// になり、送信元検査を通しても **CORS の応答ヘッダーが無いと画面は結果を読めない**。
+// その origin にだけ開ける。フロントが送るカスタムヘッダーは allowHeaders に列挙
+// すること——漏れると preflight で落ち、Web 版（同一オリジン）では再現しない
 app.use('/api/*', securityHeaders)
 app.use('/api/*', originGuard(port))
+app.use(
+  '/api/*',
+  cors({
+    origin: [...DESKTOP_ORIGINS],
+    allowHeaders: ['Content-Type', 'Accept', 'X-API-Key'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  }),
+)
 
 app.get('/api/health', (c) =>
   c.json({
