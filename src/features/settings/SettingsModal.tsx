@@ -9,7 +9,7 @@ import {
   type TokenRate,
 } from '../../lib/model-config'
 import { lookupModelPrice } from '../../lib/model-pricing'
-import type { RuntimeMode } from '../../lib/runtime-mode'
+import { RUNTIME_MODE_RESET_EVENT, type RuntimeMode } from '../../lib/runtime-mode'
 import {
   addModel,
   addModelFromSource,
@@ -63,6 +63,14 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
       setError(localizeAiError(err))
     }
   }, [])
+
+  // 開いている間に同梱サーバーが起動したら、モードを見直す（デスクトップ版）
+  useEffect(() => {
+    if (!open) return
+    const again = () => void refresh()
+    window.addEventListener(RUNTIME_MODE_RESET_EVENT, again)
+    return () => window.removeEventListener(RUNTIME_MODE_RESET_EVENT, again)
+  }, [open, refresh])
 
   useEffect(() => {
     if (open) void refresh()
