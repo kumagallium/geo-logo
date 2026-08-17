@@ -30,6 +30,18 @@ export type Metrics = {
   strokes: number
   /** 塗り面積 / 外接矩形 */
   ink: number
+  /**
+   * 塗り面積 / 墨の凸包。えぐれの深さ。
+   *
+   * 「ぼてっとして見える」を数にしたもの。角（corners）は輪郭が何回折れるかを
+   * 数えるが、**浅い折れをいくら並べても塊は塊のまま**で、丸い団子と articulate
+   * したマークの区別が付かない。凸包との差は「どれだけ食い込んでいるか」を見る
+   * ので、塊かどうかが直接出る。
+   *
+   * 実測（samples/）: 縄 26% / ペガサス 44% / ジャッカル（輪郭）55% に対し、
+   * 熊 76% / 魚 81% / クローバー 84%。後者が「ぼてっと」と読まれる側。
+   */
+  solidity: number
   /** 左右対称度 0〜1。画素の鏡像一致で測る */
   mirror: number
   /** 離れている墨の塊の面積比（大きい順）。1 要素なら 1 つながり */
@@ -264,6 +276,44 @@ export function islandsOf(
   }
 }
 
+/**
+ * 墨が自分の凸包をどれだけ埋めているか。
+ *
+ * 画素で測る。輪郭から求めると、離れた島や穴の扱いで別の話が混ざる。
+ * 96 px で足りる（島の判定と同じ理由で、比は解像度でほとんど動かない）。
+ */
+export function solidityOf(built: BuildResult, size = 96): number {
+  const { gray } = rasterizeGray(built, { size })
+  const points: { x: number; y: number }[] = []
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) if (gray[y * size + x] < 128) points.push({ x, y })
+  }
+  if (points.length < 3) return 0
+
+  // 凸包（Andrew の monotone chain）。画素は走査順に並んでいるので整列済み
+  const cross = (o: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y)
+  const half = (src: typeof sorted) => {
+    const out: typeof sorted = []
+    for (const p of src) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], p) <= 0) out.pop()
+      out.push(p)
+    }
+    return out.slice(0, -1)
+  }
+  const hull = [...half(sorted), ...half([...sorted].reverse())]
+
+  let area = 0
+  for (let i = 0; i < hull.length; i++) {
+    const p = hull[i]
+    const q = hull[(i + 1) % hull.length]
+    area += p.x * q.y - q.x * p.y
+  }
+  area = Math.abs(area) / 2
+  return area > 0 ? Math.min(points.length / area, 1) : 0
+}
+
 export function measure(design: LogoDesign, built: BuildResult): Metrics {
   const span = Math.max(built.artBounds.width, built.artBounds.height) || 1
   const { vertices, corners, contours } = shapeOf(built, span * 0.01)
@@ -278,6 +328,7 @@ export function measure(design: LogoDesign, built: BuildResult): Metrics {
     radii: distinctCount(radiiOf(design).map((r) => r / norm)),
     strokes: distinctCount(strokesOf(design).map((w) => w / norm)),
     ink: built.inkRatio,
+    solidity: solidityOf(built),
     mirror: mirrorScore(built),
     islands,
     nests,
@@ -290,7 +341,8 @@ export function formatMetrics(m: Metrics): string {
     `図形 ${String(m.shapes).padStart(3)} / 頂点 ${String(m.vertices).padStart(3)} / ` +
     `角 ${String(m.corners).padStart(3)} / 輪郭 ${String(m.contours).padStart(2)} / ` +
     `半径 ${m.radii} 種 / 線幅 ${m.strokes} 種 / ` +
-    `インク ${(m.ink * 100).toFixed(0)}% / 対称 ${(m.mirror * 100).toFixed(0)}%` +
+    `インク ${(m.ink * 100).toFixed(0)}% / 塊 ${(m.solidity * 100).toFixed(0)}% / ` +
+    `対称 ${(m.mirror * 100).toFixed(0)}%` +
     (m.nests > 0 ? ` / 覗き ${m.nests}` : '') +
     (m.islands.length > 1
       ? ` / 島 ${m.islands.length}（最小 ${(m.islands[m.islands.length - 1] * 100).toFixed(1)}%）`

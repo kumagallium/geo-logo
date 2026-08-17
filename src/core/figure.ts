@@ -31,15 +31,41 @@ import { PHI } from './units'
  * 付け根が太く先が細い。太さの違う 2 円を外接接線で包むと、円と直線だけで
  * テーパーが出る——古典的な作図そのもので、自由曲線を使わずに済む。
  */
-export const FIGURE_FORMS = ['disc', 'ring', 'arc', 'bar', 'vesica', 'limb'] as const
+export const FIGURE_FORMS = [
+  'disc',
+  'ring',
+  'arc',
+  'bar',
+  'vesica',
+  'limb',
+  'blade',
+  'notch',
+] as const
 export type FigureFormId = (typeof FIGURE_FORMS)[number]
 
 const LIMB_WORDS = /limb|taper|cone|arm|leg|tail|horn|claw|finger|肢|腕|脚|尾|角/
+/**
+ * 直線の面と楔。
+ *
+ * ここまでの語彙は disc / ring / arc / bar / vesica / limb で、**全部が丸い**。
+ * bar は棒であって切る面ではなく、layers の白は同心にしか置けないので、
+ * 「塊を直線で削ぐ」も「縁から楔で切り込む」も書けなかった。丸い語彙だけで
+ * 組むと、どれだけ関係を積んでも輪郭が塊のまま残る（実測: samples/ の関係方式は
+ * 墨/凸包が 64〜85%。手本にした紋章ロゴは目分量で 40〜55%）。
+ *
+ * 手本の鋭さは、ほとんどが直線の切り込みから来ている——獅子の岩と鬣の棘、
+ * 犬の首の楔、有翼馬の風切羽。どれも「大きな円を直線で切った残り」で、
+ * 円だけでは原理的に出せない。
+ */
+const BLADE_WORDS = /blade|slab|plank|plate|facet|rock|base|shear|板|面|岩|台|盤/
+const NOTCH_WORDS = /notch|wedge|spike|shard|fang|tooth|thorn|ray|楔|棘|牙|刺|鬣/
 
 export function resolveFigureForm(input: string): FigureFormId {
   const key = input.trim().toLowerCase().replace(/[\s_-]+/g, '')
-  if (key === 'limb') return 'limb'
-  // 別名で来ることが多いので、棒に落ちる前に四肢を拾う
+  for (const f of FIGURE_FORMS) if (key === f) return f
+  // 別名で来ることが多いので、棒や円に落ちる前に拾う
+  if (NOTCH_WORDS.test(key)) return 'notch'
+  if (BLADE_WORDS.test(key)) return 'blade'
   if (LIMB_WORDS.test(key) && key !== 'bar') return 'limb'
   return resolveBaseForm(key) as FigureFormId
 }
@@ -749,6 +775,55 @@ function shapeFor(
         ],
         ref: id,
       }
+    case 'blade': {
+      // 平らな面。angle 方向に長さ 2r、厚みは slender で決まる。
+      //
+      // layers を ["paper"] にすると**直線で削ぐ**。grip: "on" で縁に置けば
+      // 弦を切り落とし、"center" なら塊を横断して割る。ink のままなら
+      // 台・岩・帯になる。円だけの語彙に無かったのはこれ。
+      return {
+        shapes: [
+          {
+            kind: 'rect',
+            id,
+            cx: c.x,
+            cy: c.y,
+            w: round(r * 2),
+            h: round(Math.max((r0 * 2) / slender + grow * 2, pen)),
+            rotate: round(c.angle),
+          },
+        ],
+        ref: id,
+      }
+    }
+
+    case 'notch': {
+      // 楔。中心が要で、span の開きで angle の向きへ広がる。
+      //
+      // ink なら棘（count と spread で鬣・風切羽・光条）、paper なら縁からの
+      // 切り込み。要が尖っているので、縁取りのぶんは要を後ろへ下げて確保する。
+      const back = grow > 0 ? grow : 0
+      const ext = grow > 0 ? (grow / Math.max(r0, 1e-6)) * (180 / Math.PI) : 0
+      // span の既定（180）は arc 向けで、楔には広すぎる。120 を超える扇は
+      // 楔ではなく塊なので、書かれなかったときに丸が増えないよう頭を抑える。
+      // 半分を削ぎ落としたいときは blade を使う
+      const open = Math.min(span, 120)
+      return {
+        shapes: [
+          {
+            kind: 'wedge',
+            id,
+            cx: round(c.x - Math.cos(rad(c.angle)) * back),
+            cy: round(c.y - Math.sin(rad(c.angle)) * back),
+            r: round(r0 + grow * 2),
+            a0: round(c.angle - open / 2 - ext),
+            a1: round(c.angle + open / 2 + ext),
+          },
+        ],
+        ref: id,
+      }
+    }
+
     case 'limb': {
       // 太さの違う 2 円を外接接線で包む。円と直線だけでテーパーが出る
       const tipR = round(Math.max(r0 * tip, pen * 0.35) + grow)

@@ -134,3 +134,42 @@ describe('種類数', () => {
     expect(distinctCount([0, -1, 2])).toBe(1)
   })
 })
+
+describe('塊（墨 / 凸包）', () => {
+  // 角は「輪郭が何回折れるか」しか数えないので、浅い折れを並べた塊と
+  // えぐれのあるマークを区別できない。凸包との差なら塊かどうかが直接出る
+  it('丸は凸包を埋め切る', () => {
+    const d = design([{ kind: 'circle', id: 'a', cx: 0, cy: 0, r: 2 }], [{ op: 'add', ref: 'a' }])
+    expect(measure(d, built(d)).solidity).toBeGreaterThan(0.95)
+  })
+
+  it('えぐれた形は下がる', () => {
+    // 十字。凸包は正方形なので、腕の間の 4 隅ぶんが空く
+    const d = design(
+      [
+        { kind: 'rect', id: 'h', cx: 0, cy: 0, w: 4, h: 0.7 },
+        { kind: 'rect', id: 'v', cx: 0, cy: 0, w: 0.7, h: 4 },
+      ],
+      [
+        { op: 'add', ref: 'h' },
+        { op: 'add', ref: 'v' },
+      ],
+    )
+    expect(measure(d, built(d)).solidity).toBeLessThan(0.55)
+  })
+
+  it('同じ面積でも、散らばっているほうが低い', () => {
+    const one = design([{ kind: 'circle', id: 'a', cx: 0, cy: 0, r: 2 }], [{ op: 'add', ref: 'a' }])
+    const two = design(
+      [
+        { kind: 'circle', id: 'a', cx: -2.4, cy: 0, r: 1.41 },
+        { kind: 'circle', id: 'b', cx: 2.4, cy: 0, r: 1.41 },
+      ],
+      [
+        { op: 'add', ref: 'a' },
+        { op: 'add', ref: 'b' },
+      ],
+    )
+    expect(measure(two, built(two)).solidity).toBeLessThan(measure(one, built(one)).solidity)
+  })
+})

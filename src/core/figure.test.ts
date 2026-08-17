@@ -551,7 +551,7 @@ describe('鏡像', () => {
 describe('総当たり', () => {
   // 破綻は「警告なし・空でない・潰れていない」で機械判定する
   it('置き方と形の組み合わせで図形が壊れない', () => {
-    for (const form of ['disc', 'ring', 'arc', 'bar', 'vesica'] as const) {
+    for (const form of ['disc', 'ring', 'arc', 'bar', 'vesica', 'blade', 'notch'] as const) {
       for (const grip of ['on', 'outside', 'inside', 'center'] as const) {
         const d = designSchema.parse(
           buildFromFigure(
@@ -567,5 +567,80 @@ describe('総当たり', () => {
         expect(built.inkRatio, `${form}/${grip}`).toBeGreaterThan(0.05)
       }
     }
+  })
+})
+
+describe('直線の面と楔', () => {
+  // ここまでの語彙は全部丸く、「塊を直線で削ぐ」が書けなかった。手本にした
+  // 紋章ロゴの鋭さは、ほとんどが直線の切り込みから来ている
+  it('blade は矩形、notch は扇を出す', () => {
+    const d = buildFromFigure(
+      base([
+        { id: 'a', form: 'blade', x: 0, y: 0, size: 1.2 },
+        { id: 'b', form: 'notch', on: 'a', grip: 'center', size: 2, span: 30 },
+      ] as never),
+    )
+    expect(d.shapes.find((s) => s.id === 'a')?.kind).toBe('rect')
+    expect(d.shapes.find((s) => s.id === 'b')?.kind).toBe('wedge')
+  })
+
+  it('別名で書かれても拾う', () => {
+    for (const w of ['blade', 'slab', 'rock', '岩', '台']) expect(resolveFigureForm(w)).toBe('blade')
+    for (const w of ['notch', 'wedge', 'spike', '棘', '牙']) expect(resolveFigureForm(w)).toBe('notch')
+    // 既存の語を奪っていないこと
+    expect(resolveFigureForm('bar')).toBe('bar')
+    expect(resolveFigureForm('arm')).toBe('limb')
+    expect(resolveFigureForm('disc')).toBe('disc')
+  })
+
+  // span の既定（180）は arc 向け。楔にそのまま当てると半円になり、
+  // 「丸を減らすために足した形」が丸を増やす
+  it('span が書かれなくても楔は塊にならない', () => {
+    const d = buildFromFigure(
+      base([
+        { id: 'a', form: 'disc', x: 0, y: 0, size: 2 },
+        { id: 'b', form: 'notch', on: 'a', grip: 'center', size: 2.6 },
+      ] as never),
+    )
+    const w = d.shapes.find((s) => s.id === 'b')
+    if (!w || w.kind !== 'wedge') throw new Error('楔が無い')
+    expect(w.a1 - w.a0).toBeLessThanOrEqual(120)
+  })
+
+  it('paper にすると直線で削げる', () => {
+    const of = (nodes: unknown[]) => {
+      const d = designSchema.parse(buildFromFigure(base(nodes as never)))
+      return measure(d, build(d))
+    }
+    const plain = of([{ id: 'a', form: 'disc', x: 0, y: 0, size: 2 }])
+    const cut = of([
+      { id: 'a', form: 'disc', x: 0, y: 0, size: 2 },
+      { id: 'b', form: 'notch', on: 'a', grip: 'center', size: 2.6, span: 40, layers: ['paper'] },
+    ])
+    // 丸には角が無い。直線で削ぐと輪郭に角が出る——ここが円だけでは届かない所
+    expect(plain.corners).toBe(0)
+    expect(cut.corners).toBeGreaterThan(0)
+    expect(cut.ink).toBeLessThan(plain.ink)
+  })
+
+  it('縁取りは面と楔にも回る', () => {
+    const d = buildFromFigure(
+      base([
+        { id: 'a', form: 'disc', x: 0, y: 0, size: 2 },
+        { id: 'b', form: 'blade', on: 'a', grip: 'center', size: 1.2, outline: 1 },
+        { id: 'c', form: 'notch', on: 'a', grip: 'center', size: 2.4, span: 30, outline: 1 },
+      ] as never),
+    )
+    const rect = d.shapes.find((s) => s.id === 'b')
+    const rectO = d.shapes.find((s) => s.id === 'bO')
+    const wedge = d.shapes.find((s) => s.id === 'c')
+    const wedgeO = d.shapes.find((s) => s.id === 'cO')
+    if (rect?.kind !== 'rect' || rectO?.kind !== 'rect') throw new Error('面が無い')
+    if (wedge?.kind !== 'wedge' || wedgeO?.kind !== 'wedge') throw new Error('楔が無い')
+    expect(rectO.w).toBeGreaterThan(rect.w)
+    expect(rectO.h).toBeGreaterThan(rect.h)
+    expect(wedgeO.r).toBeGreaterThan(wedge.r)
+    // 要も後ろへ下げないと、尖った先だけ白が回らない
+    expect(wedgeO.cx).not.toBe(wedge.cx)
   })
 })
