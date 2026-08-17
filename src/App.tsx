@@ -19,7 +19,7 @@ import { SettingsModal } from './features/settings/SettingsModal'
 import { initUpdater } from './lib/updater'
 import { loadSettings, setAiModelsAvailable } from './features/settings/store'
 import { localizeAiError, OPEN_SETTINGS_EVENT } from './lib/ai-error'
-import { detectRuntimeMode, type RuntimeMode } from './lib/runtime-mode'
+import { RUNTIME_MODE_RESET_EVENT, detectRuntimeMode, type RuntimeMode } from './lib/runtime-mode'
 
 /**
  * 左に履歴、中央に設計、右に対話。
@@ -70,6 +70,13 @@ export default function App() {
 
   useEffect(() => {
     void refreshModels()
+  }, [refreshModels])
+
+  // 同梱サーバーが後から起動したら、モードとモデル一覧を見直す（デスクトップ版）
+  useEffect(() => {
+    const again = () => void refreshModels()
+    window.addEventListener(RUNTIME_MODE_RESET_EVENT, again)
+    return () => window.removeEventListener(RUNTIME_MODE_RESET_EVENT, again)
   }, [refreshModels])
 
   // デスクトップ版だけ、起動時と 24 時間ごとに更新を確認する
