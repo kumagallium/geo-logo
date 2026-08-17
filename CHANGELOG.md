@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.7](https://github.com/kumagallium/geo-logo/compare/v0.1.6...v0.1.7) - 2026-08-17
+
+- feat: 彫りの深いハウススタイルを既定にし、トレースの丸めを減らす by @kumagallium in https://github.com/kumagallium/geo-logo/pull/27
+
 ## [v0.1.6](https://github.com/kumagallium/geo-logo/compare/v0.1.5...v0.1.6) - 2026-08-17
 
 - feat: 画像生成を自動有効化し、会話をブラッシュアップとして扱う by @kumagallium in https://github.com/kumagallium/geo-logo/pull/25
