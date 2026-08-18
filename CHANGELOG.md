@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.11](https://github.com/kumagallium/geo-logo/compare/v0.1.10...v0.1.11) - 2026-08-18
+
+- feat: 会話履歴を利用者のフォルダに保存する（再起動で消えない） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/33
+
 ## [v0.1.10](https://github.com/kumagallium/geo-logo/compare/v0.1.9...v0.1.10) - 2026-08-18
 
 - feat: 設計図の作図円を「形を支配する弧」だけに絞る + コンセプトの主題可読性 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/34
