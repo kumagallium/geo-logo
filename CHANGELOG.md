@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.13](https://github.com/kumagallium/geo-logo/compare/v0.1.12...v0.1.13) - 2026-08-18
+
+- fix: 輪郭の角張りを減らす（緩い曲線の弦への潰れと、平行接線の継ぎ目） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/40
+
 ## [v0.1.12](https://github.com/kumagallium/geo-logo/compare/v0.1.11...v0.1.12) - 2026-08-18
 
 - feat: 輪郭に比例の規律を通す整定パス + 候補を会話ごとに保持 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/37
