@@ -1194,7 +1194,7 @@ export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResul
   // 精度を指定されたら一発で決める。探索は要らず、本数は自然に最小になる
   if (options.toleranceRatio !== undefined) {
     const tol = scale * options.toleranceRatio
-    const segments = fitPass(points, tol, scale)
+    const segments = straightenRuns(fitPass(points, tol, scale), scale)
     return {
       segments: options.snapRadii ? segments.map((g) => (g.r === undefined ? g : snapRadius(g))) : segments,
       tolerance: round(tol),
@@ -1217,11 +1217,75 @@ export function traceArcs(points: Vec[], options: TraceOptions = {}): TraceResul
     }
   }
 
+  const tidied = straightenRuns(best, scale)
   const segments = options.snapRadii
-    ? best.map((s) => (s.r === undefined ? s : snapRadius(s)))
-    : best
+    ? tidied.map((s) => (s.r === undefined ? s : snapRadius(s)))
+    : tidied
 
   return { segments, tolerance: round(hi) }
+}
+
+/**
+ * ほぼ一直線に並んだ連なりを、1 本の直線へまとめる。
+ *
+ * 当てはめは窓ごとに判断するので、1 本の直線の辺が「わずかに曲がった弧＋直線」
+ * のように割れて残ることがある。元の画素は簡略化（許容 2 画素）を通っており、
+ * 直線の辺にも 1〜2 画素のジグザグが残っているためで、当てはめはそれを忠実に
+ * なぞってしまう（実測: 生成した星の辺 12 本のうち 4 本が半径 5 前後＝マーク幅
+ * を超える「ほぼ直線の弧」になり、腕が波打って見えた）。
+ *
+ * 人が清書するときは、そこを 1 本の直線に引き直す。連なりの両端を結ぶ弦から
+ * 途中の点も弧の膨らみも外れていなければ、それは直線として描くべきもの。
+ *
+ * 角（大きく折れる点）は必ず残す。ここを跨いでまとめると形が崩れる。
+ */
+function straightenRuns(segments: ContourSegment[], scale: number): ContourSegment[] {
+  const n = segments.length
+  if (n < 3) return segments
+  const limit = scale * 0.02
+
+  /** i 番の弧の膨らみ（直線なら 0） */
+  const sagOf = (i: number): number => {
+    const seg = segments[i]
+    if (seg.r === undefined) return 0
+    const from = segments[(i - 1 + n) % n]
+    const ch = Math.hypot(seg.x - from.x, seg.y - from.y)
+    const r = Math.max(seg.r, ch / 2)
+    return r - Math.sqrt(Math.max(r * r - (ch / 2) ** 2, 0))
+  }
+
+  const out: ContourSegment[] = []
+  let i = 0
+  while (i < n) {
+    // i 番から始めて、まとめられるところまで伸ばす
+    let end = i
+    while (end + 1 < n) {
+      const startPt = segments[(i - 1 + n) % n]
+      const cand = segments[end + 1]
+      const dx = cand.x - startPt.x
+      const dy = cand.y - startPt.y
+      const len = Math.hypot(dx, dy)
+      if (len < 1e-9) break
+      // 途中の点と弧の膨らみが、両端を結ぶ弦から離れていないこと
+      let worst = 0
+      for (let k = i; k <= end + 1; k++) {
+        const p = segments[k]
+        worst = Math.max(worst, Math.abs((p.x - startPt.x) * dy - (p.y - startPt.y) * dx) / len)
+        worst = Math.max(worst, sagOf(k))
+      }
+      if (worst > limit) break
+      end++
+    }
+    if (end > i) {
+      // まとめた区間は 1 本の直線にする
+      out.push({ ...segments[end], r: undefined, sweep: true })
+      i = end + 1
+    } else {
+      out.push(segments[i])
+      i++
+    }
+  }
+  return out
 }
 
 /**
