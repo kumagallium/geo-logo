@@ -1,11 +1,11 @@
 {
-  "version": "0.1.9",
+  "version": "0.1.10",
   "notes": "See the changelog for details.",
-  "pub_date": "2026-08-18T01:12:27Z",
+  "pub_date": "2026-08-18T01:59:11Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUaWJqWTJQSnRRa1hWTVZvMzhYdGZ5dUY0V210RWJUYnBDRVMvOTRyRlFOdXBRLytCd3pkNFc2WWdnbk9qaTJWd0kzU0hLbXdKSDNmTnVpWHRpUXpWeFpvNytaMUNZZ3dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDE1NTQ3CWZpbGU6Z2VvLWxvZ29fYWFyY2g2NC5hcHAudGFyLmd6CklXbzd4ZUx6a2k5Y0NKUTVoRmFnc2ZhY2x0bVA5L09DV1Exa3lhWDAwSzY0TTBWek5LTkJvajdEZEpoOTRjTFJZQUhwK0M0K0hwaHNteWZsbUZDcERBPT0K",
-      "url": "https://github.com/kumagallium/geo-logo/releases/download/v0.1.9/geo-logo_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUaWJqWTJQSnRRa1VROUFGZzZJV3IzbHJTekRRQWExMUNPSUlNQmZVckR1VVlQTVdicnhET0JBdFduOGVPNnhmT3hrR3hpdHdrTHlRZHJ4enJYd2IrOWtHQklNS016ekFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg3MDE4MzUxCWZpbGU6Z2VvLWxvZ29fYWFyY2g2NC5hcHAudGFyLmd6CktXY2VzZVFPYVBJZ2t6N1UxMmQyTWI2K2xuZFFRbDJtWjE1c0o4bnZKNnhjSk1DNWlQK3hoejBtNW1Kd1dUNXRXSEtCaTFDaDFDNklYYlZIMUtnWUF3PT0K",
+      "url": "https://github.com/kumagallium/geo-logo/releases/download/v0.1.10/geo-logo_aarch64.app.tar.gz"
     }
   }
 }
