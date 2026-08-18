@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.9](https://github.com/kumagallium/geo-logo/compare/v0.1.8...v0.1.9) - 2026-08-18
+
+- feat: コンセプト仮説で候補を割る（seed 散らしから解釈の分岐へ） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/31
+
 ## [v0.1.8](https://github.com/kumagallium/geo-logo/compare/v0.1.7...v0.1.8) - 2026-08-17
 
 - fix: 画像プロンプトから題材バイアスを除く（眉・目・頭・esports を中立化） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/29
