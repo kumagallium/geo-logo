@@ -36,7 +36,8 @@ export default function HistoryPane({
               <span>{titleOf(s)}</span>
               <em>{s.messages.length > 0 ? `${s.messages.length} 往復` : '未着手'}</em>
             </button>
-            {s.messages.length > 0 && (
+            {/* 最後の 1 本が未着手のときだけ隠す。消しても同じ殻が出るだけなので */}
+            {(sessions.length > 1 || s.messages.length > 0) && (
               <button
                 type="button"
                 className="history__delete"

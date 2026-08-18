@@ -377,7 +377,11 @@ export default function App() {
         onDelete={(id) => {
           const target = sessions.find((s) => s.id === id)
           if (!target) return
-          if (!window.confirm(`「${titleOf(target)}」を削除しますか？ファイルも消えます。`)) return
+          // 未着手の会話にはファイルが無い。失うものが無いので確認も要らない
+          const saved = target.messages.length > 0
+          if (saved && !window.confirm(`「${titleOf(target)}」を削除しますか？ファイルも消えます。`)) {
+            return
+          }
           const rest = sessions.filter((s) => s.id !== id)
           const next = rest.length > 0 ? rest : [newSession()]
           setSessions(next)
@@ -387,7 +391,7 @@ export default function App() {
             setActiveId(s.id)
             setDesign(s.design ?? samples[0])
           }
-          if (syncedRef.current) {
+          if (saved && syncedRef.current) {
             void deleteRemoteSession(id).catch((err) =>
               setError(err instanceof Error ? err.message : String(err)),
             )
@@ -400,8 +404,11 @@ export default function App() {
           // 候補はセッション側に居るので、ここで触らない（触ると移動先の案が消える）
         }}
         onCreate={() => {
-          const s = newSession()
-          setSessions((prev) => [s, ...prev])
+          // 未着手の会話が既にあるならそこへ行く。押すたびに空の殻が積み上がると、
+          // 同じ「新しい設計」が何本も並んで見分けがつかなくなる（実測で 2 本並んだ）
+          const blank = sessions.find((s) => s.messages.length === 0)
+          const s = blank ?? newSession()
+          if (!blank) setSessions((prev) => [s, ...prev])
           setActiveId(s.id)
           setDesign(samples[0])
           setReference(null)
