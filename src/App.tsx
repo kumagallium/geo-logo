@@ -72,12 +72,31 @@ export default function App() {
   const [mode, setMode] = useState<RuntimeMode | null>(null)
   const [models, setModels] = useState<ModelSummary[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
-  // 同じブリーフから複数案を出し、人が選ぶ。構図の良否は機械判定できないため。
-  const [candidates, setCandidates] = useState<LogoDesign[]>([])
   const [reference, setReference] = useState<{ name: string; svg: string } | null>(null)
   const [shaping, setShaping] = useState<Shaping>(SHAPING)
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
+
+  // 同じブリーフから複数案を出し、人が選ぶ。構図の良否は機械判定できないため。
+  //
+  // 候補は**会話ごと**に持つ。画面の状態にすると、別の会話へ移って戻るだけで
+  // 消え、並べた意味が無くなる（実測: 4 案を出しても移動して戻ると 1 案）。
+  const candidates = active.candidates ?? []
+  const setCandidates = useCallback(
+    (next: LogoDesign[] | ((prev: LogoDesign[]) => LogoDesign[])) => {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === activeId
+            ? {
+                ...s,
+                candidates: typeof next === 'function' ? next(s.candidates ?? []) : next,
+              }
+            : s,
+        ),
+      )
+    },
+    [activeId],
+  )
 
   // 履歴の保存先フォルダ（サーバーが居るとき）。画面の隅に示す
   const [workspaceDir, setWorkspaceDir] = useState<string | null>(null)
@@ -367,7 +386,6 @@ export default function App() {
             const s = next[0]
             setActiveId(s.id)
             setDesign(s.design ?? samples[0])
-            setCandidates([])
           }
           if (syncedRef.current) {
             void deleteRemoteSession(id).catch((err) =>
@@ -379,14 +397,13 @@ export default function App() {
           setActiveId(id)
           const s = sessions.find((x) => x.id === id)
           if (s?.design) setDesign(s.design)
-          setCandidates([])
+          // 候補はセッション側に居るので、ここで触らない（触ると移動先の案が消える）
         }}
         onCreate={() => {
           const s = newSession()
           setSessions((prev) => [s, ...prev])
           setActiveId(s.id)
           setDesign(samples[0])
-          setCandidates([])
           setReference(null)
         }}
       />
