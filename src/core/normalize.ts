@@ -5,6 +5,7 @@ import {
   type LogoDesign,
   type Shape,
 } from './dsl'
+import { temper } from './temper'
 import { coordCandidates, radiusCandidates, snap, snapAngle } from './units'
 
 export type NormalizeNote = {
@@ -114,6 +115,11 @@ export function normalize(input: LogoDesign): NormalizeResult {
         break
     }
   }
+
+  // --- Step 1.2: 輪郭の整定 ---
+  // 絵から起こした輪郭（contour）は、上の switch がどれも当たらない。画素を
+  // なぞった寸法がそのまま残るので、比例の規律をここで通す（core/temper.ts）。
+  temper(design, record)
 
   // --- Step 1.5: 線の太さを揃える ---
   // 幾何ロゴでは線の太さが揃っていることが「整って見える」ことの大半を占める。

@@ -1,0 +1,150 @@
+import { describe, expect, it } from 'vitest'
+import type { LogoDesign } from './dsl'
+import { temper, type Recorder } from './temper'
+import { PHI } from './units'
+
+/**
+ * 整定は「壊さずに数値だけをモジュール系へ載せる」パス。
+ * 効いていることと、効きすぎていないことの両方を固定する。
+ */
+
+type Seg = { x: number; y: number; r?: number; sweep?: boolean }
+
+function designWith(segments: Seg[][]): LogoDesign {
+  return {
+    name: 'test',
+    concept: '',
+    module: 64,
+    grid: 'golden',
+    palette: { ink: '#000', background: '#fff' },
+    shapes: segments.map((segs, i) => ({
+      kind: 'contour' as const,
+      id: `r${i}`,
+      segments: segs.map((s) => ({ sweep: true, ...s })),
+    })),
+    constraints: [],
+    groups: [],
+    parts: [{ id: 'p', steps: segments.map((_, i) => ({ op: 'add' as const, ref: `r${i}` })), fill: 'ink', mirror: 'none' as const }],
+  } as unknown as LogoDesign
+}
+
+const collect = () => {
+  const notes: Array<{ id: string; field: string; from: number; to: number; label: string | null }> = []
+  const record: Recorder = (id, field, from, to, label) => notes.push({ id, field, from, to, label })
+  return { notes, record }
+}
+
+/**
+ * 円周上に n 点を置き、弧半径 r で結んだ輪郭。
+ *
+ * 弦は 2R·sin(π/n) なので、r ≧ R であれば必ず円弧が成立する。復元が返す
+ * 輪郭も常にこの条件を満たしている（成立しない弧は書けない）ので、
+ * 試験もその前提で作る。
+ */
+function ring(R: number, n: number, r: number, cx = 0, cy = 0, sy = 1): Seg[] {
+  const out: Seg[] = []
+  for (let i = 0; i < n; i++) {
+    const t = (i / n) * Math.PI * 2
+    out.push({ x: cx + R * Math.cos(t), y: cy + R * sy * Math.sin(t), r })
+  }
+  return out
+}
+
+describe('整定', () => {
+  it('近い半径どうしを 1 つに寄せ、種類を増やさない', () => {
+    // 3 つの輪郭がわずかに違う半径を持つ。まとめて 1 つの値になってほしい
+    const design = designWith([
+      ring(0.9, 8, 1.02),
+      ring(0.8, 8, 0.98),
+      ring(0.7, 8, 1.0),
+    ])
+    const { record } = collect()
+    temper(design, record)
+
+    const radii = new Set<string>()
+    for (const s of design.shapes) {
+      if (s.kind !== 'contour') continue
+      for (const g of s.segments) if (g.r !== undefined) radii.add(g.r.toFixed(4))
+    }
+    expect(radii.size).toBe(1)
+    // 寄せ先はモジュール系の値（1）
+    expect(Number([...radii][0])).toBeCloseTo(1, 6)
+  })
+
+  it('小さな半径を比率で守る（大きく動かさない）', () => {
+    // 瞳のような小さい弧。絶対差で丸めると数十%動いてしまう
+    const design = designWith([ring(0.06, 8, 0.071)])
+    const { record } = collect()
+    temper(design, record)
+
+    const r = (design.shapes[0] as { segments: Seg[] }).segments[0].r as number
+    expect(Math.abs(r - 0.071) / 0.071).toBeLessThan(0.07)
+  })
+
+  it('縦横比が正準比の近くなら、そこへ寄せる', () => {
+    // 1.60 は φ(1.618) の 1.1% 手前
+    const design = designWith([ring(0.8, 12, 0.9, 0, 0, 1 / 1.6)])
+    const { notes, record } = collect()
+    temper(design, record)
+
+    const xs = (design.shapes[0] as { segments: Seg[] }).segments.map((s) => s.x)
+    const ys = (design.shapes[0] as { segments: Seg[] }).segments.map((s) => s.y)
+    const ratio = (Math.max(...xs) - Math.min(...xs)) / (Math.max(...ys) - Math.min(...ys))
+    expect(ratio).toBeCloseTo(PHI, 4)
+    expect(notes.some((n) => n.field === '縦横比' && n.label === '1:φ')).toBe(true)
+  })
+
+  it('正準比から遠ければ、比は動かさない', () => {
+    const design = designWith([ring(0.8, 12, 0.9, 0, 0, 1 / 1.3)])
+    const { notes, record } = collect()
+    temper(design, record)
+    expect(notes.some((n) => n.field === '縦横比')).toBe(false)
+  })
+
+  it('墨の重心を原点へ置く（穴は差し引く）', () => {
+    // 右へ寄せた外形。重心が原点に来るよう平行移動されるはず
+    const design = designWith([ring(1, 8, 1.1, 3, 0)])
+    const { record } = collect()
+    temper(design, record)
+
+    const segs = (design.shapes[0] as { segments: Seg[] }).segments
+    const cx = segs.reduce((a, s) => a + s.x, 0) / segs.length
+    expect(cx).toBeCloseTo(0, 6)
+  })
+
+  it('弧が成立しなくなる半径は与えない（半径 ≧ 弦の半分）', () => {
+    const design = designWith([ring(0.8, 12, 0.9, 0, 0, 1 / 1.6), ring(0.2, 8, 0.21)])
+    const { record } = collect()
+    temper(design, record)
+
+    for (const s of design.shapes) {
+      if (s.kind !== 'contour') continue
+      const segs = s.segments
+      for (let i = 0; i < segs.length; i++) {
+        const g = segs[i]
+        if (g.r === undefined) continue
+        const from = segs[(i - 1 + segs.length) % segs.length]
+        const chord = Math.hypot(g.x - from.x, g.y - from.y)
+        expect(g.r).toBeGreaterThanOrEqual(chord / 2 - 1e-9)
+      }
+    }
+  })
+
+  it('輪郭を含まない設計には何もしない', () => {
+    const design = {
+      name: 'x',
+      concept: '',
+      module: 64,
+      grid: 'golden',
+      palette: { ink: '#000', background: '#fff' },
+      shapes: [{ kind: 'circle', id: 'c', cx: 1, cy: 2, r: 3 }],
+      constraints: [],
+      groups: [],
+      parts: [],
+    } as unknown as LogoDesign
+    const { notes, record } = collect()
+    temper(design, record)
+    expect(notes).toHaveLength(0)
+    expect((design.shapes[0] as { cx: number }).cx).toBe(1)
+  })
+})

@@ -69,6 +69,9 @@ function parseSession(x: unknown): Session | null {
       ? s.messages.map(parseMessage).filter((m): m is Message => m !== null)
       : [],
     design: isDesign(s.design) ? s.design : null,
+    ...(Array.isArray(s.candidates) && s.candidates.some(isDesign)
+      ? { candidates: s.candidates.filter(isDesign) }
+      : {}),
   }
 }
 

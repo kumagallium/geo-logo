@@ -22,6 +22,15 @@ export type Session = {
   updatedAt: number
   messages: Message[]
   design: LogoDesign | null
+  /**
+   * 直近に並べた候補。
+   *
+   * 会話ごとに持たせる。画面の状態として持つと、別の会話へ移って戻った
+   * だけで消え、選び直せなくなる（実測: 4 案を出しても、新しい設計へ移って
+   * 戻ると 1 案になった）。候補は「選ぶために並べたもの」なので、選び終える
+   * まで——つまり次に作図するまで——残っていないと用を成さない。
+   */
+  candidates?: LogoDesign[]
 }
 
 let counter = 0
