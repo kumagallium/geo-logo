@@ -275,6 +275,47 @@ describe('paintOf', () => {
 
 describe('直線の扱い', () => {
   /**
+   * 画素から起こした輪郭は、幾何学的に完全な直線の辺でも縁が階段状になる。
+   * その階段は輪郭追跡の都合で**弦の片側に揃う**ので、僅かに反れた円のほうが
+   * 誤差が小さくなり、直線が負ける。実測では星の辺 10 本のうち 8 本が半径
+   * 7〜11（マーク幅の 2 倍超）の弧に化け、辺が撓んで見えた。
+   *
+   * 判定の境目は、この階段（マークの 1% ほど）より上に置かなければならない。
+   */
+  it('階段状に量子化された多角形でも、辺は直線のまま', () => {
+    const k = 5
+    const outer = 190
+    const inner = 80
+    const verts: Vec[] = []
+    for (let i = 0; i < k * 2; i++) {
+      const t = (i / (k * 2)) * Math.PI * 2 - Math.PI / 2
+      const r = i % 2 === 0 ? outer : inner
+      verts.push({ x: r * Math.cos(t), y: r * Math.sin(t) })
+    }
+    // 辺を細かく取り、画素の格子へ落とす（生成画像の縁と同じ階段を作る）
+    const pts: Vec[] = []
+    for (let i = 0; i < verts.length; i++) {
+      const a = verts[i]
+      const b = verts[(i + 1) % verts.length]
+      for (let s = 0; s < 72; s++) {
+        pts.push({
+          x: Math.round(a.x + (b.x - a.x) * (s / 72)),
+          y: Math.round(a.y + (b.y - a.y) * (s / 72)),
+        })
+      }
+    }
+    const { segments } = traceArcs(pts, {
+      toleranceRatio: 0.008,
+      symmetry: false,
+      snapRadii: false,
+    })
+    const arcs = segments.filter((s) => s.r !== undefined).length
+    // 10 辺の星。弧に化けた辺があってはいけない
+    expect(segments.length).toBeLessThanOrEqual(12)
+    expect(arcs).toBe(0)
+  })
+
+  /**
    * 半径や行列式の大きさで直線かどうかを判定してはいけない。丸め誤差で
    * わずかに非直線になった点列に、最小二乗が極小半径のでたらめな円を返す。
    * そのずれで窓が伸びず、菱形が団子になった（実測: 武田菱が 85 本の円弧に）。
