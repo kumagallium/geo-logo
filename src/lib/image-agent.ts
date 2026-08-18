@@ -100,6 +100,11 @@ Design requirements:
   with clean white gaps of consistent weight.
 - Bold, simple, few chunky masses. No ragged or noisy edges. It must stay
   readable at 16 pixels and work as an app icon.
+- Prefer the fewest, largest masses that still read. Drop any feature smaller
+  than about 5% of the canvas — no tiny fussy details.
+- If the concept calls for a line-based construction (a ring, a constellation,
+  connected strokes), draw it with bold uniform lines at least 4% of the
+  canvas thick — still pure black on pure white.
 - If the brief itself asks for a soft, gentle or friendly tone, relax the
   cuts and follow the brief.`
 }

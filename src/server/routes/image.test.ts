@@ -118,6 +118,54 @@ describe('画像先行の設計 API', () => {
     expect(body.code).toBe('NO_IMAGE_GENERATOR')
   })
 
+  it('モデル未登録でコンセプトを頼むと、そうと分かる形で断る', async () => {
+    // resolve-model は env にも落ちるので、試験中は env を確実に空にする
+    const saved = { ...process.env }
+    delete process.env.GEOLOGO_PROVIDER
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.OPENAI_API_KEY
+    delete process.env.GOOGLE_GENERATIVE_AI_API_KEY
+    try {
+      const res = await app.request('/concepts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brief: '知的な熊' }),
+      })
+      expect(res.status).toBe(400)
+      const body = (await res.json()) as { code?: string }
+      expect(body.code).toBe('NO_MODEL_REGISTERED')
+    } finally {
+      process.env = saved
+    }
+  })
+
+  it('subject と concept が design へ通る（コンセプト経由の形）', { timeout: 30_000 }, async () => {
+    const size = 96
+    const gray = new Uint8Array(size * size).fill(255)
+    for (let y = 24; y < 72; y++) for (let x = 24; x < 72; x++) gray[y * size + x] = 0
+    const fixture = join(dir, 'fixture2.png')
+    writeFileSync(fixture, encodeGrayPng(gray, size, size))
+    setImageConfig({ command: `cp ${fixture} {out}`, size })
+
+    const res = await app.request('/design', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        brief: '知的な熊',
+        name: '学究のシルエット',
+        subject: 'A solid silhouette of a bear wearing glasses',
+        concept: '眼鏡という記号で知性を定義する',
+        seed: 3,
+      }),
+    })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      design: { name: string; concept?: string }
+    }
+    expect(body.design.name).toBe('学究のシルエット')
+    expect(body.design.concept).toBe('眼鏡という記号で知性を定義する')
+  })
+
   it('偽の生成器（cp）で 絵 → 設計 が一巡する', { timeout: 30_000 }, async () => {
     // 復元できる最小の「絵」：白地に黒い矩形
     const size = 96
