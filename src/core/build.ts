@@ -688,6 +688,34 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
         // （実測: 26 要素の輪郭に作図線 122 本）
         const drawn = new Set<string>()
 
+        // 作図円は**形を支配する弧だけ**に絞る。復元した輪郭は弧が数十本に
+        // なり、全弧の円を描くと設計図が円の群れに沈む（実測: 熊 1 案で
+        // 作図円が数十個、構造を見せるはずの図が読めなくなった）。
+        // 重要度は弧長（半径 × 中心角）。長い弧が形を決めている。
+        // 本数は輪郭の複雑さに応じて 2〜6。残りの弧は弦だけの軽い足場にする。
+        const arcs: { i: number; len: number }[] = []
+        for (let i = 0; i < s.segments.length; i++) {
+          const from = s.segments[(i - 1 + s.segments.length) % s.segments.length]
+          const seg = s.segments[i]
+          if (seg.r === undefined) continue
+          const c = arcCenter(from, seg)
+          if (!c) continue
+          // 浅くて長い弧は弧長で勝ってしまうが、半径が輪郭の何倍もあるので
+          // 円を描くと紙面を占領する（実測: 巨大な円 2 個が図を支配した）。
+          // 輪郭の 2 倍に収まらない円は主要候補から外す（弦は残る）
+          if (c.r > reach * 2) continue
+          const chord = Math.hypot(seg.x - from.x, seg.y - from.y)
+          const sweep = 2 * Math.asin(Math.min(1, chord / (2 * c.r)))
+          arcs.push({ i, len: c.r * sweep })
+        }
+        const budget = Math.max(2, Math.min(6, Math.round(s.segments.length / 8)))
+        const major = new Set(
+          arcs
+            .sort((a, b) => b.len - a.len)
+            .slice(0, budget)
+            .map((a) => a.i),
+        )
+
         for (let i = 0; i < s.segments.length; i++) {
           const from = s.segments[(i - 1 + s.segments.length) % s.segments.length]
           const seg = s.segments[i]
@@ -702,21 +730,8 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
             })
             continue
           }
-          const c = arcCenter(from, seg)
-          if (!c) continue
-          // ほぼ直線の弧は、半径が輪郭の何倍にもなる。その作図円を描くと
-          // 巨大な円が 1 つだけ紙面を占領し、他が潰れて見えなくなる
-          if (c.r > reach * 6) continue
-
-          const key = `${Math.round(c.x * 40)}:${Math.round(c.y * 40)}:${Math.round(c.r * 40)}`
-          if (!drawn.has(key)) {
-            drawn.add(key)
-            out.push({ kind: 'circle', id: `${s.id}-${i}`, cx: c.x * M, cy: c.y * M, r: c.r * M })
-            out.push({ kind: 'point', id: `${s.id}-${i}c`, x: c.x * M, y: c.y * M })
-          }
-          // 中心から弧の終点へ通す線（延長した直径）と、端点どうしを結ぶ弦。
-          // 始点への線は 1 つ前の弧の終点と同じなので引かない
-          through(`${s.id}-${i}r1`, c, seg)
+          // 端点どうしを結ぶ弦。全弧に引く——輪郭に沿う短い線なので煩くならず、
+          // 「多角形の足場から起こした」ことは伝わる
           out.push({
             kind: 'line',
             id: `${s.id}-${i}k`,
@@ -725,6 +740,18 @@ function buildConstruction(design: LogoDesign, M: number): ConstructionItem[] {
             x2: seg.x * M,
             y2: seg.y * M,
           })
+          if (!major.has(i)) continue
+          const c = arcCenter(from, seg)
+          if (!c) continue
+
+          const key = `${Math.round(c.x * 40)}:${Math.round(c.y * 40)}:${Math.round(c.r * 40)}`
+          if (!drawn.has(key)) {
+            drawn.add(key)
+            out.push({ kind: 'circle', id: `${s.id}-${i}`, cx: c.x * M, cy: c.y * M, r: c.r * M })
+            out.push({ kind: 'point', id: `${s.id}-${i}c`, x: c.x * M, y: c.y * M })
+          }
+          // 中心から弧の終点へ通す線（延長した直径）。主要な弧だけに引く
+          through(`${s.id}-${i}r1`, c, seg)
         }
         break
       }
