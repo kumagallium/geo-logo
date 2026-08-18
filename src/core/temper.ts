@@ -71,6 +71,44 @@ function chordOf(segs: Seg[], i: number): number {
   return Math.hypot(seg.x - from.x, seg.y - from.y)
 }
 
+/** 弧の両端の接線の向き。直線なら弦の向き */
+function tangents(from: Seg, seg: Seg): readonly [number, number] | null {
+  if (seg.r === undefined) {
+    const a = Math.atan2(seg.y - from.y, seg.x - from.x)
+    return [a, a] as const
+  }
+  const dx = seg.x - from.x
+  const dy = seg.y - from.y
+  const d = Math.hypot(dx, dy)
+  if (d < 1e-9) return null
+  const r = Math.max(seg.r, d / 2)
+  const h = Math.sqrt(Math.max(r * r - (d / 2) ** 2, 0))
+  const sign = seg.sweep ? 1 : -1
+  const cx = (from.x + seg.x) / 2 + sign * h * (-dy / d)
+  const cy = (from.y + seg.y) / 2 + sign * h * (dx / d)
+  const t = (px: number, py: number) => Math.atan2(sign * (px - cx), -sign * (py - cy))
+  return [t(from.x, from.y), t(seg.x, seg.y)] as const
+}
+
+/**
+ * 継ぎ目での接線の折れの合計（ラジアン）。
+ *
+ * 半径を動かすと弧の膨らみが変わり、継ぎ目の接線がずれる。輪郭は当てはめの
+ * 段で G1 連続に均してあるので、**整定がそれを崩してはいけない**（実測: 素朴に
+ * 寄せると継ぎ目の折れが平均 6.4° → 6.7° に悪化した）。寄せる前後でこれを
+ * 比べ、悪くなるなら寄せない。
+ */
+function jointBreak(segs: Seg[]): number {
+  let sum = 0
+  for (let i = 0; i < segs.length; i++) {
+    const a = tangents(segs[(i - 1 + segs.length) % segs.length], segs[i])
+    const b = tangents(segs[i], segs[(i + 1) % segs.length])
+    if (!a || !b) continue
+    sum += Math.abs(Math.atan2(Math.sin(b[0] - a[1]), Math.cos(b[0] - a[1])))
+  }
+  return sum
+}
+
 /**
  * 半径を少数の値へ寄せる。
  *
@@ -124,7 +162,12 @@ function harmonizeRadii(design: LogoDesign, record: Recorder): void {
     return null
   }
 
+  const applied = new Set<number>()
   for (const c of contours) {
+    const before = jointBreak(c.segments)
+    const saved = c.segments.map((s) => s.r)
+    const used: number[] = []
+
     for (let i = 0; i < c.segments.length; i++) {
       const seg = c.segments[i]
       if (seg.r === undefined) continue
@@ -133,6 +176,7 @@ function harmonizeRadii(design: LogoDesign, record: Recorder): void {
       const min = (chordOf(c.segments, i) / 2) * 1.0005
       if (t.value >= min) {
         seg.r = t.value
+        used.push(t.value)
         continue
       }
       // 目標が弦に対して小さすぎて円弧が成立しない弧。固有の値を与えると
@@ -142,13 +186,33 @@ function harmonizeRadii(design: LogoDesign, record: Recorder): void {
         .map((x) => x.value)
         .filter((v) => v >= min)
         .sort((a, b) => a - b)[0]
-      if (fallback !== undefined) seg.r = fallback
+      if (fallback !== undefined) {
+        seg.r = fallback
+        used.push(fallback)
+      }
+    }
+
+    // 滑らかさを損なうなら、この輪郭は寄せない。比例の見栄えより、
+    // 継ぎ目が流れていることのほうが目に見える。
+    //
+    // 許容は継ぎ目 1 本あたり 0.2°。寸法を動かせば継ぎ目は必ず僅かに動くので
+    // 完全禁止では何も寄せられないが、実測で問題になった悪化（1 本あたり
+    // 0.3°）は弾ける幅にする。
+    const budget = ((0.2 * Math.PI) / 180) * c.segments.length
+    const after = jointBreak(c.segments)
+    if (after > before + budget) {
+      c.segments.forEach((s, i) => {
+        s.r = saved[i]
+      })
+    } else {
+      for (const v of used) applied.add(v)
     }
   }
 
   // 記録は束ごとに 1 件。弧ごとに出すと表が数十行になり、何が起きたのか
   // かえって読めなくなる（実測: 1 マークで 74 件）
   for (const t of targets) {
+    if (!applied.has(t.value)) continue
     const mean = t.group.reduce((a, b) => a + b, 0) / t.group.length
     if (Math.abs(mean - t.value) < 1e-9 && t.group.length === 1) continue
     record(`半径 ×${t.group.length}`, '半径', mean, t.value, t.label, 'snap')

@@ -686,8 +686,15 @@ function fitPass(points: Vec[], tol: number, scale: number): ContourSegment[] {
         fitted && fitted.r <= straight ? maxDeviation(window, fitted) : Number.POSITIVE_INFINITY
 
       // 円弧を採るのは、直線より明らかに良いときだけ。同程度なら直線を選ぶ。
-      // 紋や記号の直線の辺が、わずかに膨らんだ円弧になるのを防ぐ
-      const c = devArc * 2 < devLine ? fitted : null
+      // 紋や記号の直線の辺が、わずかに膨らんだ円弧になるのを防ぐ。
+      //
+      // ただし「同程度なら直線」を無条件に適用すると、**緩い曲線まで弦に
+      // 落ちる**。有機的な輪郭では、それが多角形に見える原因になる（実測:
+      // ゴリラの外周は 90 本中 36 本が直線で、継ぎ目に角が並んだ）。
+      // 弦からの外れが目に見える大きさ（マークの 0.4%）を超えていれば、
+      // そこは実際に曲がっているので、2 倍の条件を満たさなくても弧を採る。
+      const flat = scale * 0.004
+      const c = devArc * 2 < devLine || (devLine > flat && devArc <= devLine) ? fitted : null
       if (Math.min(devArc, devLine) > tol) break
 
       if (c) {
@@ -911,7 +918,6 @@ export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): Co
     const vv = vx * vx + vy * vy
     const den = 2 * (1 - dot)
 
-    // 接線が平行なら 1 本の弧で足りる
     let joint: Vec | null = null
     if (den > 1e-6) {
       const disc = vt * vt + den * vv
@@ -923,6 +929,22 @@ export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): Co
             y: (from.y + d * s0 + (to.y - d * s1)) / 2,
           }
         }
+      }
+    } else {
+      // 両端の接線が平行な区間。
+      //
+      // 弦も同じ向きなら、そこは本当に直線なので 1 本で足りる（角と角を結ぶ
+      // 辺がこれ。2 本に割っても同じ形にしかならない）。
+      //
+      // 弦が傾いているときは 1 本の弧に落としてはいけない。円弧の接線は回った
+      // 角だけ回るので、始点で t0 に合わせた弧の終点は必ず t0 から傾いており、
+      // **終点側が合わない**。継ぎ目にそのぶんの折れが残る（実測: 目のような
+      // 小さな輪郭で平均 13.8°）。逆向きに膨らむ 2 本＝S 字の biarc なら、
+      // 弦の中点で継いで両端の接線に合う。
+      const chord = Math.atan2(vy, vx)
+      const off = Math.abs(Math.atan2(Math.sin(chord - t0), Math.cos(chord - t0)))
+      if (off > 1e-3 && Math.PI - off > 1e-3) {
+        joint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
       }
     }
 
