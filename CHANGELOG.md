@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.1.14](https://github.com/kumagallium/geo-logo/compare/v0.1.13...v0.1.14) - 2026-08-18
+
+- feat: 設定をタブに分け、保存先を選べるようにする by @kumagallium in https://github.com/kumagallium/geo-logo/pull/42
+- fix: 未着手の会話を消せるようにし、押すたびに増やさない by @kumagallium in https://github.com/kumagallium/geo-logo/pull/39
+
 ## [v0.1.13](https://github.com/kumagallium/geo-logo/compare/v0.1.12...v0.1.13) - 2026-08-18
 
 - fix: 輪郭の角張りを減らす（緩い曲線の弦への潰れと、平行接線の継ぎ目） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/40
