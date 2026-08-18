@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.10](https://github.com/kumagallium/geo-logo/compare/v0.1.9...v0.1.10) - 2026-08-18
+
+- feat: 設計図の作図円を「形を支配する弧」だけに絞る + コンセプトの主題可読性 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/34
+
 ## [v0.1.9](https://github.com/kumagallium/geo-logo/compare/v0.1.8...v0.1.9) - 2026-08-18
 
 - feat: コンセプト仮説で候補を割る（seed 散らしから解釈の分岐へ） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/31
