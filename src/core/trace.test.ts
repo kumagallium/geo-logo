@@ -316,6 +316,48 @@ describe('直線の扱い', () => {
   })
 
   /**
+   * 復元は簡略化（許容 2 画素）を通した点列を当てはめるので、直線の辺にも
+   * 1〜2 画素のジグザグが残る。当てはめは窓ごとに判断するため、1 本の辺が
+   * 「ほぼ直線の弧＋直線」に割れて残り、腕が波打って見えた（実測: 生成した
+   * 星の辺 12 本のうち 4 本が半径 5 前後＝マーク幅超の弧）。
+   * ほぼ一直線に並んだ連なりは、1 本の直線へ引き直されていること。
+   */
+  it('ジグザグの残った直線の辺は、1 本の直線に引き直される', () => {
+    const w = 200
+    const pts: Vec[] = []
+    const corners: Vec[] = [
+      { x: -w, y: -w },
+      { x: w, y: -w },
+      { x: w, y: w },
+      { x: -w, y: w },
+    ]
+    for (let i = 0; i < corners.length; i++) {
+      const a = corners[i]
+      const b = corners[(i + 1) % corners.length]
+      for (let s = 0; s < 90; s++) {
+        const t = s / 90
+        // 簡略化が残す 2 画素ぶんのジグザグ（辺そのものは直線）
+        const jitter = ((s % 3) - 1) * 2
+        const nx = -(b.y - a.y)
+        const ny = b.x - a.x
+        const len = Math.hypot(nx, ny)
+        pts.push({
+          x: a.x + (b.x - a.x) * t + (nx / len) * jitter,
+          y: a.y + (b.y - a.y) * t + (ny / len) * jitter,
+        })
+      }
+    }
+    const { segments } = traceArcs(pts, {
+      toleranceRatio: 0.008,
+      symmetry: false,
+      snapRadii: false,
+    })
+    // 正方形。辺 4 本ぶんに収まり、弧が混ざっていないこと
+    expect(segments.length).toBeLessThanOrEqual(6)
+    expect(segments.filter((s) => s.r !== undefined)).toHaveLength(0)
+  })
+
+  /**
    * 半径や行列式の大きさで直線かどうかを判定してはいけない。丸め誤差で
    * わずかに非直線になった点列に、最小二乗が極小半径のでたらめな円を返す。
    * そのずれで窓が伸びず、菱形が団子になった（実測: 武田菱が 85 本の円弧に）。
