@@ -10,6 +10,8 @@ import { resolveModelConfig } from './config/resolve-model.js'
 import { listModels, setDataDir } from './config/models.js'
 import imageRoute from './routes/image.js'
 import modelsRoute from './routes/models.js'
+import sessionsRoute from './routes/sessions.js'
+import { setWorkspaceDir } from './config/sessions.js'
 import { cors } from 'hono/cors'
 import { DESKTOP_ORIGINS, originGuard, securityHeaders } from './security.js'
 
@@ -27,6 +29,14 @@ const port = Number(process.env.GEOLOGO_PORT ?? 8787)
  */
 const dataDir = process.env.GEOLOGO_DATA_DIR?.trim()
 if (dataDir) setDataDir(dataDir)
+
+/**
+ * 会話履歴の置き場（Graphium の ~/Documents/Graphium に相当）。デスクトップ版は
+ * アプリ本体が ~/Documents/geo-logo を GEOLOGO_WORKSPACE_DIR で渡す。
+ * 未指定（pnpm dev）は data/workspace。
+ */
+const workspaceDir = process.env.GEOLOGO_WORKSPACE_DIR?.trim()
+if (workspaceDir) setWorkspaceDir(workspaceDir)
 
 /** デスクトップ版のアプリ本体が渡すバージョン。単体起動なら dev。 */
 const appVersion = process.env.GEOLOGO_APP_VERSION ?? 'dev'
@@ -94,6 +104,7 @@ app.get('/api/health', (c) =>
 )
 
 app.route('/api/models', modelsRoute)
+app.route('/api/sessions', sessionsRoute)
 app.route('/api/image', imageRoute)
 
 const designRequest = z.object({

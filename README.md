@@ -65,6 +65,7 @@ pnpm reconstruct 絵.png 出力名 [許容誤差]                  # 手元の�
 |---|---|---|
 | 使う場面 | ローカル `pnpm dev` / セルフホスト | GitHub Pages などの静的配信 |
 | API キーの保管 | サーバー側 `data/models.json`（macOS は Keychain へ移行可） | ブラウザの localStorage |
+| 会話履歴の保管 | 利用者のフォルダに 1 会話 1 ファイル（デスクトップ版 `~/Documents/geo-logo/sessions/`、`pnpm dev` は `data/workspace/sessions/`） | ブラウザの localStorage |
 | LLM 呼び出し | Hono サーバー経由 | ブラウザからプロバイダーへ直接 |
 | 判定方法 | `/api/health` が JSON を返すか（`src/lib/runtime-mode.ts`） | |
 
@@ -625,7 +626,9 @@ src/
     config/keychain.ts  #   macOS Keychain ラッパー
     config/models.ts    #   models.json 永続化 + Keychain 移行
     config/resolve-model.ts  # ヘッダー / models.json / .env の解決
+    config/sessions.ts  #   会話履歴のファイル保存（GEOLOGO_WORKSPACE_DIR）
     routes/models.ts    #   モデル CRUD API
+    routes/sessions.ts  #   会話履歴 API
   features/
     settings/           # AI 設定（モデルレジストリ + UI）
     designer/           # プロンプト・プレビュー・インスペクタ

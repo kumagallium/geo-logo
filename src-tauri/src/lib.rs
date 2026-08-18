@@ -7,6 +7,7 @@
 // 構成は Graphium から移植した。踏み抜いた罠もそのまま引き継いでいる。
 
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
@@ -86,10 +87,14 @@ fn start_sidecar(
         .map_err(|e| format!("データディレクトリを解決できません: {e}"))?;
     let _ = std::fs::create_dir_all(&data_dir);
 
+    let workspace_dir = workspace_dir(&app)?;
+    log(format!("[sidecar] workspace: {}", workspace_dir.display()));
+
     let mut cmd = Command::new(&node);
     cmd.arg(&script)
         .env("GEOLOGO_PORT", port.to_string())
         .env("GEOLOGO_DATA_DIR", &data_dir)
+        .env("GEOLOGO_WORKSPACE_DIR", &workspace_dir)
         // macOS では API キーをログインキーチェーンへ入れる。
         .env(
             "GEOLOGO_USE_KEYCHAIN",
@@ -141,6 +146,37 @@ fn start_sidecar(
     Ok(pid)
 }
 
+/// 会話履歴の置き場。Graphium の ~/Documents/Graphium と同じく、利用者が
+/// Finder から見て触れる場所に置く（設定と鍵は app_data_dir のまま）。
+/// 書類フォルダを解決できない・作れない環境では app_data_dir の下に落とす
+/// （履歴の置き場のせいでサイドカーが起動しない、にはしない）。
+fn workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(docs) = app.path().document_dir() {
+        let dir = docs.join("geo-logo");
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return Ok(dir);
+        }
+    }
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("データディレクトリを解決できません: {e}"))?
+        .join("workspace");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{} を作れません: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// 履歴フォルダを OS のファイルマネージャで開く。パスは Rust 側で決めるので、
+/// 画面から任意のパスを開かせる口にはならない。
+#[tauri::command]
+fn open_workspace_dir(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = workspace_dir(&app)?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("フォルダを開けません: {e}"))
+}
+
 #[tauri::command]
 fn stop_sidecar(state: tauri::State<'_, SidecarState>) -> Result<(), String> {
     if let Some(pid) = state.0.lock().unwrap().take() {
@@ -165,7 +201,7 @@ pub fn run() {
     }
 
     builder
-        .invoke_handler(tauri::generate_handler![start_sidecar, stop_sidecar])
+        .invoke_handler(tauri::generate_handler![start_sidecar, stop_sidecar, open_workspace_dir])
         .run(tauri::generate_context!())
         .expect("geo-logo の起動に失敗しました");
 }
