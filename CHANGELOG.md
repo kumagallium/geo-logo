@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.12](https://github.com/kumagallium/geo-logo/compare/v0.1.11...v0.1.12) - 2026-08-18
+
+- feat: 輪郭に比例の規律を通す整定パス + 候補を会話ごとに保持 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/37
+
 ## [v0.1.11](https://github.com/kumagallium/geo-logo/compare/v0.1.10...v0.1.11) - 2026-08-18
 
 - feat: 会話履歴を利用者のフォルダに保存する（再起動で消えない） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/33
