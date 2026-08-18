@@ -51,12 +51,14 @@ function ring(R: number, n: number, r: number, cx = 0, cy = 0, sy = 1): Seg[] {
 }
 
 describe('整定', () => {
-  it('近い半径どうしを 1 つに寄せ、種類を増やさない', () => {
-    // 3 つの輪郭がわずかに違う半径を持つ。まとめて 1 つの値になってほしい
+  it('ほぼ同じ半径どうしを 1 つに寄せ、種類を増やさない', () => {
+    // 3 つの輪郭がわずかに違う半径を持つ。まとめて 1 つの値になってほしい。
+    // 弧半径と点の乗る円を一致させる（＝継ぎ目が滑らか）。整定は滑らかさを
+    // 損なう寄せを避けるので、そこを崩す差は寄せられない——それが正しい
     const design = designWith([
-      ring(0.9, 8, 1.02),
-      ring(0.8, 8, 0.98),
-      ring(0.7, 8, 1.0),
+      ring(1.003, 8, 1.003),
+      ring(0.997, 8, 0.997),
+      ring(1.0, 8, 1.0),
     ])
     const { record } = collect()
     temper(design, record)
@@ -128,6 +130,47 @@ describe('整定', () => {
         expect(g.r).toBeGreaterThanOrEqual(chord / 2 - 1e-9)
       }
     }
+  })
+
+  it('滑らかさを損なう寄せはしない（継ぎ目の折れを悪化させない）', () => {
+    // 当てはめの段で G1 連続に均された輪郭。半径を動かすと継ぎ目がずれるので、
+    // 悪化するなら寄せないでほしい
+    const R = 0.83
+    const n = 10
+    const segs: Seg[] = Array.from({ length: n }, (_, i) => {
+      const t = ((i + 1) / n) * Math.PI * 2
+      return { x: R * Math.cos(t), y: R * Math.sin(t), r: R, sweep: true }
+    })
+    const design = designWith([segs])
+
+    const tangent = (from: Seg, seg: Seg) => {
+      const dx = seg.x - from.x
+      const dy = seg.y - from.y
+      const d = Math.hypot(dx, dy)
+      const r = Math.max(seg.r as number, d / 2)
+      const h = Math.sqrt(Math.max(r * r - (d / 2) ** 2, 0))
+      const sign = seg.sweep ? 1 : -1
+      const cx = (from.x + seg.x) / 2 + sign * h * (-dy / d)
+      const cy = (from.y + seg.y) / 2 + sign * h * (dx / d)
+      const t = (px: number, py: number) => Math.atan2(sign * (px - cx), -sign * (py - cy))
+      return [t(from.x, from.y), t(seg.x, seg.y)] as const
+    }
+    const brk = (list: Seg[]) => {
+      let sum = 0
+      for (let i = 0; i < list.length; i++) {
+        const a = tangent(list[(i - 1 + list.length) % list.length], list[i])
+        const b = tangent(list[i], list[(i + 1) % list.length])
+        sum += Math.abs(Math.atan2(Math.sin(b[0] - a[1]), Math.cos(b[0] - a[1])))
+      }
+      return sum
+    }
+
+    const before = brk(segs.map((s) => ({ ...s })))
+    const { record } = collect()
+    temper(design, record)
+    const after = brk((design.shapes[0] as { segments: Seg[] }).segments)
+
+    expect(after).toBeLessThanOrEqual(before + (1.01 * Math.PI) / 180)
   })
 
   it('輪郭を含まない設計には何もしない', () => {
