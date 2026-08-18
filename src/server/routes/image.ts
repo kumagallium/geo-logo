@@ -8,8 +8,11 @@ import { Buffer } from 'node:buffer'
 import { randomInt } from 'node:crypto'
 import { decodeGray } from '../../core/png.js'
 import { reconstruct } from '../../core/reconstruct.js'
-import { errorBody } from '../../lib/ai-error-codes.js'
+import { errorBody, noModelRegisteredBody } from '../../lib/ai-error-codes.js'
+import { generateImageConcepts } from '../../lib/concept-agent.js'
+import { createModel } from '../../lib/create-model.js'
 import { generateSymbolImage } from '../../lib/image-agent.js'
+import { resolveModelConfig } from '../config/resolve-model.js'
 import {
   getImageConfig,
   resolveImageGen,
@@ -67,9 +70,33 @@ function enqueue<T>(job: () => Promise<T>): Promise<T> {
   return next
 }
 
+/**
+ * ブリーフからコンセプト仮説を出す（言語モデル）。
+ *
+ * 候補を seed だけで散らすと解釈が 1 つに固定される。ここで比喩の選択を
+ * 数案に割り、クライアントは案ごとに /design を叩く。モデル未登録なら
+ * 404 相当を返し、クライアントは seed 散らしへ落ちる。
+ */
+app.post('/concepts', async (c) => {
+  const body = await c.req.json<{ brief?: string; count?: number }>().catch(() => null)
+  const brief = body?.brief?.trim()
+  if (!brief || brief.length > 2000) {
+    return c.json({ error: 'brief は 1〜2000 文字の文字列で指定してください' }, 400)
+  }
+  const count = Math.min(Math.max(Math.trunc(body?.count ?? 4), 2), 6)
+  const modelConfig = resolveModelConfig(c, {})
+  if (!modelConfig) return c.json(noModelRegisteredBody(), 400)
+  try {
+    const concepts = await generateImageConcepts(brief, createModel(modelConfig), count)
+    return c.json({ concepts, model: modelConfig.name })
+  } catch (err) {
+    return c.json(errorBody(err), 502)
+  }
+})
+
 app.post('/design', async (c) => {
   const body = await c.req
-    .json<{ brief?: string; seed?: number; name?: string }>()
+    .json<{ brief?: string; seed?: number; name?: string; subject?: string; concept?: string }>()
     .catch(() => null)
   const brief = body?.brief?.trim()
   if (!brief || brief.length > 2000) {
@@ -78,6 +105,10 @@ app.post('/design', async (c) => {
   // ブラッシュアップでは brief が会話の累積になり長くなる。名前は最初の
   // 依頼（クライアントが渡す）を使い、題名が指示文の羅列にならないようにする
   const name = body?.name?.trim() || brief
+  // コンセプト経由なら、絵の主題は案の視覚記述（英語）を使う。
+  // rationale は design.concept に載り、レポートで「狙い」が読める
+  const subject = body?.subject?.trim() || brief
+  const rationale = body?.concept?.trim()
   const config = getImageConfig()
   if (!config) {
     return c.json({ error: '画像生成器が設定されていません', code: 'NO_IMAGE_GENERATOR' }, 409)
@@ -89,7 +120,7 @@ app.post('/design', async (c) => {
 
   try {
     const design = await enqueue(async () => {
-      const { png } = await generateSymbolImage(brief, {
+      const { png } = await generateSymbolImage(subject, {
         provider: 'command',
         modelId: 'command',
         apiKey: '',
@@ -105,6 +136,7 @@ app.post('/design', async (c) => {
         tolerance: 0.008,
         radii: 8,
         name: name.slice(0, 40),
+        ...(rationale ? { concept: rationale } : {}),
       })
     })
     // /api/design と同じ形で返す。クライアントは経路の違いを知らなくていい

@@ -100,20 +100,57 @@ async function imageGenAvailable(): Promise<boolean> {
  * 投げても待ち行列に並ぶだけで、後ろの要求ほど無応答時間が伸びてタイムアウト
  * 境界に寄る。こちらから直列に送れば、1 要求の待ちは常に生成 1 回ぶんで済む。
  */
+type ImageConcept = { title: string; visual: string; rationale: string }
+
+/**
+ * コンセプト仮説を先に作る（言語モデル）。
+ *
+ * seed だけを散らすと解釈が 1 つに固定され、候補がほぼ同じ絵になる（実測）。
+ * 「何をモチーフに、どんな比喩で表すか」を数案に割ってから各案を描く。
+ * モデル未登録・失敗時は null（呼び元は seed 散らしへ落ちる）。
+ */
+async function fetchImageConcepts(brief: string, count: number): Promise<ImageConcept[] | null> {
+  try {
+    const res = await apiFetch('api/image/concepts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief, count }),
+    })
+    if (!res.ok) return null
+    const json = (await res.json()) as { concepts?: ImageConcept[] }
+    return json.concepts?.length ? json.concepts : null
+  } catch {
+    return null
+  }
+}
+
 async function requestImageDesigns(
   brief: string,
   count: number,
   options: RequestDesignsOptions,
 ): Promise<CandidateResult[]> {
+  // 新規生成はコンセプトで割る。ブラッシュアップ（baseSeed あり）は選んだ案の
+  // 構図に錨を下ろしたままにしたいので、コンセプトを引き直さない
+  const concepts =
+    options.baseSeed === undefined ? await fetchImageConcepts(brief, count) : null
+
   const results: CandidateResult[] = []
   for (let i = 0; i < count; i++) {
     // 1 件目は選択中の候補の seed を引き継ぐ（構図を保って磨く）。
     // 残りは seed 未指定＝サーバーが散らす（別の当たりを探す）
     const seed = i === 0 ? options.baseSeed : undefined
+    const concept = concepts?.[i % concepts.length]
     const result = await apiFetch('api/image/design', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ brief, seed, name: options.name }),
+      body: JSON.stringify({
+        brief,
+        seed,
+        // コンセプト経由では案名を題名にする（候補の下に解釈の違いが見える）
+        name: concept?.title ?? options.name,
+        subject: concept?.visual,
+        concept: concept?.rationale,
+      }),
     })
       .then(async (res) => {
         if (!res.ok) throw await aiErrorFromResponse(res, '画像からの作図に失敗しました')
