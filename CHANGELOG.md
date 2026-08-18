@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.15](https://github.com/kumagallium/geo-logo/compare/v0.1.14...v0.1.15) - 2026-08-18
+
+- fix: 直線の辺が弧に化けるのを直す（v0.1.13 の角張り修正の副作用） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/44
+
 ## [v0.1.14](https://github.com/kumagallium/geo-logo/compare/v0.1.13...v0.1.14) - 2026-08-18
 
 - feat: 設定をタブに分け、保存先を選べるようにする by @kumagallium in https://github.com/kumagallium/geo-logo/pull/42
