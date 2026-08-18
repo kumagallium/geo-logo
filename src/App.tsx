@@ -415,7 +415,7 @@ export default function App() {
             <span className="chip">{activeModel ?? 'モデル未設定'}</span>
             <span className="chip">{mode ?? '…'}</span>
             <button type="button" className="btn btn--ghost" onClick={() => setSettingsOpen(true)}>
-              AI 設定
+              設定
             </button>
           </div>
         </header>

@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { localizeAiError } from '../../lib/ai-error'
 import { isTauri } from '../../lib/api-base'
-import { checkForUpdates, getAppVersion, type CheckResult } from '../../lib/updater'
+import {
+  checkForUpdates,
+  getAppVersion,
+  getPendingUpdate,
+  UPDATE_EVENT,
+  type CheckResult,
+  type UpdateAvailableDetail,
+} from '../../lib/updater'
+import {
+  getWorkspaceRoot,
+  openWorkspaceDir,
+  pickWorkspaceRoot,
+  relaunchApp,
+  setWorkspaceRoot,
+  type WorkspaceRootInfo,
+} from '../../lib/workspace'
 import {
   API_BASE_HINTS,
   PROVIDERS,
@@ -30,7 +45,16 @@ type Props = {
 
 type AddMode = 'new-provider' | 'existing-provider'
 
+/** 設定の章。AI の設定に用がある人と、置き場・版に用がある人は別々に来る */
+type SettingsTab = 'ai' | 'storage' | 'about'
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'ai', label: 'AI' },
+  { id: 'storage', label: 'ストレージ' },
+  { id: 'about', label: 'アプリ情報' },
+]
+
 export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
+  const [tab, setTab] = useState<SettingsTab>('ai')
   const [mode, setMode] = useState<RuntimeMode | null>(null)
   const [models, setModels] = useState<ModelSummary[]>([])
   const [selected, setSelected] = useState(() => loadSettings().model)
@@ -73,7 +97,11 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
   }, [open, refresh])
 
   useEffect(() => {
-    if (open) void refresh()
+    if (open) {
+      void refresh()
+      // 開き直したら AI へ戻す。未設定ガード（lib/ai-error.ts）はここへ連れて来る
+      setTab('ai')
+    }
   }, [open, refresh])
 
   const effectiveModelId = customModelId.trim() || pickedModelId
@@ -207,15 +235,33 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="AI 設定">
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="設定">
         <header className="modal__head">
-          <h2>AI 設定</h2>
+          <h2>設定</h2>
           <button type="button" className="btn btn--ghost" onClick={onClose}>
             閉じる
           </button>
         </header>
 
+        <div className="tabs" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              className={tab === t.id ? 'tab tab--on' : 'tab'}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
         <div className="modal__body">
+          {tab === 'storage' && <StorageSection />}
+          {tab === 'about' && <AboutSection />}
+          <div hidden={tab !== 'ai'}>
           <div className={mode === 'static' ? 'alert alert--info' : 'alert'}>
             {mode === 'static' ? (
               <>
@@ -506,8 +552,7 @@ export function SettingsModal({ open, onClose, onModelsChanged }: Props) {
           )}
 
           {mode === 'server' && <ImageGenSection />}
-
-          <AboutSection />
+          </div>
         </div>
       </div>
     </div>
@@ -664,21 +709,48 @@ function AboutSection() {
   const [version, setVersion] = useState<string>('…')
   const [result, setResult] = useState<CheckResult | null>(null)
   const [checking, setChecking] = useState(false)
+  // 起動時の自動確認で既に見つかっていれば、押さなくても再起動ボタンを出す
+  const [update, setUpdate] = useState<UpdateAvailableDetail | null>(getPendingUpdate)
+  const [installing, setInstalling] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const desktop = isTauri()
 
   useEffect(() => {
     void getAppVersion().then(setVersion)
   }, [])
 
+  // 開いている最中に自動確認が当たることもある
+  useEffect(() => {
+    const handler = (e: Event) => setUpdate((e as CustomEvent<UpdateAvailableDetail>).detail)
+    window.addEventListener(UPDATE_EVENT, handler)
+    return () => window.removeEventListener(UPDATE_EVENT, handler)
+  }, [])
+
   const check = useCallback(async () => {
     setChecking(true)
     setResult(null)
+    setError(null)
     try {
-      setResult(await checkForUpdates())
+      const r = await checkForUpdates()
+      setResult(r)
+      if (r.status === 'up-to-date') setUpdate(null)
     } finally {
       setChecking(false)
     }
   }, [])
+
+  const install = useCallback(async () => {
+    if (!update) return
+    setInstalling(true)
+    setError(null)
+    try {
+      // 入れ替えたあと updater 自身が再起動する
+      await update.install()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setInstalling(false)
+    }
+  }, [update])
 
   const message = (() => {
     if (!result) return null
@@ -686,7 +758,7 @@ function AboutSection() {
       case 'up-to-date':
         return '最新です'
       case 'available':
-        return `v${result.version} があります。画面上部の案内から更新できます`
+        return `v${result.version} があります`
       case 'unsupported':
         return 'ブラウザ版は更新の確認をしません'
       case 'error':
@@ -696,19 +768,175 @@ function AboutSection() {
 
   return (
     <>
-      <h3>このアプリについて</h3>
-      <div className="about">
-        <span>
-          geo-logo <strong>v{version}</strong>
-          {desktop ? '（デスクトップ版）' : '（ブラウザ版）'}
-        </span>
-        {desktop && (
-          <button type="button" className="btn btn--ghost" onClick={check} disabled={checking}>
-            {checking ? '確認中…' : '更新を確認'}
+      <h3>アプリ情報</h3>
+      <dl className="about">
+        <div>
+          <dt>アプリ名</dt>
+          <dd>geo-logo</dd>
+        </div>
+        <div>
+          <dt>版</dt>
+          <dd className="about__version">v{version}</dd>
+        </div>
+        <div>
+          <dt>実行</dt>
+          <dd>{desktop ? 'デスクトップ版' : 'ブラウザ版'}</dd>
+        </div>
+      </dl>
+
+      <h3>更新</h3>
+      {desktop ? (
+        <>
+          <p className="muted">
+            起動時と 24 時間ごとに自動で確認します。ここから手で確認することもできます。
+          </p>
+          <div className="about__actions">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={check}
+              disabled={checking || installing}
+            >
+              {checking ? '確認中…' : '更新を確認'}
+            </button>
+            {/* 更新があるときだけ出す。無いときに押せる再起動は用がない */}
+            {update && (
+              <button type="button" className="btn" onClick={install} disabled={installing}>
+                {installing ? '更新しています…' : `再起動して v${update.version} に更新`}
+              </button>
+            )}
+            {message && <span className="about__result">{message}</span>}
+          </div>
+          {error && <div className="alert alert--warn">{error}</div>}
+        </>
+      ) : (
+        <p className="muted">
+          ブラウザ版は配信側が常に最新です。更新の確認はデスクトップ版だけの機能です。
+        </p>
+      )}
+    </>
+  )
+}
+
+/**
+ * 保存先——会話履歴と設計の置き場。
+ *
+ * Graphium の「ローカル保存先」と同じ考え方。既定は書類フォルダだが、Dropbox 等の
+ * 同期フォルダを指すとアカウント連携なしでマシン間を渡れる。**中身は自動で
+ * 移さない**（黙って大量のファイルを動かすほうが怖い）ので、その旨を画面に出す。
+ *
+ * 反映には再起動が要る。保存先はサイドカーの起動時に環境変数で渡すので、
+ * 動いているサーバーは古い場所を掴んだままになる。
+ */
+function StorageSection() {
+  const desktop = isTauri()
+  const [info, setInfo] = useState<WorkspaceRootInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [changed, setChanged] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!desktop) return
+    void getWorkspaceRoot()
+      .then(setInfo)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [desktop])
+
+  const apply = useCallback(async (path: string | null) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await setWorkspaceRoot(path)
+      setInfo(next)
+      setChanged(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+
+  if (!desktop) {
+    return (
+      <>
+        <h3>保存先</h3>
+        <p className="muted">
+          ブラウザ版は会話をこのブラウザの localStorage に保存します。保存先は選べません。
+          フォルダに残したい場合はデスクトップ版を使ってください。
+        </p>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <h3>保存先</h3>
+      <p className="muted">
+        会話の履歴と設計を保存するフォルダです。1 会話 1 ファイル（JSON）なので、
+        Dropbox / Google Drive / OneDrive の同期フォルダを指定すれば、
+        アカウント連携なしでマシン間を渡れます。
+      </p>
+
+      <div className="storage">
+        <div className="storage__row">
+          <div className="storage__where">
+            <span className="storage__label">現在の場所</span>
+            <code>{info?.current ?? '…'}</code>
+          </div>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            disabled={busy}
+            onClick={() => {
+              void (async () => {
+                const picked = await pickWorkspaceRoot().catch((e: unknown) => {
+                  setError(e instanceof Error ? e.message : String(e))
+                  return null
+                })
+                if (picked) await apply(picked)
+              })()
+            }}
+          >
+            変更…
           </button>
-        )}
-        {message && <span className="about__result">{message}</span>}
+        </div>
+        <div className="storage__actions">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => void openWorkspaceDir().catch(() => undefined)}
+          >
+            フォルダを開く
+          </button>
+          {info?.isCustom && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={busy}
+              onClick={() => void apply(null)}
+            >
+              既定に戻す
+            </button>
+          )}
+          {info && !info.isCustom && <span className="muted">既定の場所を使っています</span>}
+        </div>
       </div>
+
+      <div className="alert alert--warn">
+        既存の会話は自動では移動しません。引き継ぐなら、先に旧フォルダの
+        <code>sessions/</code> の中身を新しいフォルダへコピーしてください。
+      </div>
+
+      {changed && (
+        <div className="alert alert--info storage__restart">
+          <span>変更を反映するにはアプリを再起動してください。</span>
+          <button type="button" className="btn" onClick={() => void relaunchApp()}>
+            再起動する
+          </button>
+        </div>
+      )}
+
+      {error && <div className="alert alert--warn">{error}</div>}
     </>
   )
 }

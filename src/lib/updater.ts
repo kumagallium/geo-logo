@@ -15,6 +15,20 @@ const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 export const UPDATE_EVENT = 'geo-logo-update-available'
 
+/**
+ * 直近の確認で見つかった更新。
+ *
+ * イベントは 1 回きりなので、あとから開いた画面（設定 → アプリ情報）は取り逃がす。
+ * 起動時の自動確認で見つかっていれば、設定を開いた時点で「再起動して更新」を
+ * 出せるように、最後の結果をここに残す。
+ */
+let pending: UpdateAvailableDetail | null = null
+
+/** 見つかっている更新。無ければ null */
+export function getPendingUpdate(): UpdateAvailableDetail | null {
+  return pending
+}
+
 /** 更新が見つかったときに UI へ渡すもの */
 export type UpdateAvailableDetail = {
   version: string
@@ -55,7 +69,10 @@ export async function checkForUpdates(): Promise<CheckResult> {
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
     const update = await check()
-    if (!update) return { status: 'up-to-date' }
+    if (!update) {
+      pending = null
+      return { status: 'up-to-date' }
+    }
 
     const detail: UpdateAvailableDetail = {
       version: update.version,
@@ -65,6 +82,7 @@ export async function checkForUpdates(): Promise<CheckResult> {
         await relaunch()
       },
     }
+    pending = detail
     window.dispatchEvent(new CustomEvent(UPDATE_EVENT, { detail }))
     return { status: 'available', version: update.version }
   } catch (e) {

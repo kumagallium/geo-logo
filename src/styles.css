@@ -488,16 +488,85 @@ body {
   gap: 12px;
 }
 
+/* アプリ情報。名前と版は「読むもの」なので定義リストで縦に並べる */
 .about {
+  margin: 8px 0 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.about > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+}
+.about > div + div {
+  border-top: 1px solid var(--line);
+}
+.about dt {
+  color: var(--ink-soft);
+}
+.about dd {
+  margin: 0;
+  text-align: right;
+}
+.about__version {
+  font-family: var(--mono);
+}
+
+.about__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  font-size: 13px;
 }
 
 .about__result {
-  color: var(--muted, #667);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+/* 保存先。パスが主役なので、行を丸ごとパスに使う */
+.storage {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.storage__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.storage__where {
+  min-width: 0;
+}
+.storage__label {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+.storage__where code {
+  display: block;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.storage__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.storage__restart {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .modal__body h3 {
