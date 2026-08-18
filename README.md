@@ -65,7 +65,7 @@ pnpm reconstruct 絵.png 出力名 [許容誤差]                  # 手元の�
 |---|---|---|
 | 使う場面 | ローカル `pnpm dev` / セルフホスト | GitHub Pages などの静的配信 |
 | API キーの保管 | サーバー側 `data/models.json`（macOS は Keychain へ移行可） | ブラウザの localStorage |
-| 会話履歴の保管 | 利用者のフォルダに 1 会話 1 ファイル（デスクトップ版 `~/Documents/geo-logo/sessions/`、`pnpm dev` は `data/workspace/sessions/`） | ブラウザの localStorage |
+| 会話履歴の保管 | 利用者のフォルダに 1 会話 1 ファイル（デスクトップ版 `~/Documents/geo-logo/sessions/`、`pnpm dev` は `data/workspace/sessions/`）。デスクトップ版は **設定 → ストレージ** で保存先を変更できる（同期フォルダを指せばマシン間を渡れる） | ブラウザの localStorage |
 | LLM 呼び出し | Hono サーバー経由 | ブラウザからプロバイダーへ直接 |
 | 判定方法 | `/api/health` が JSON を返すか（`src/lib/runtime-mode.ts`） | |
 

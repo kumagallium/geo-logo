@@ -146,24 +146,118 @@ fn start_sidecar(
     Ok(pid)
 }
 
-/// 会話履歴の置き場。Graphium の ~/Documents/Graphium と同じく、利用者が
-/// Finder から見て触れる場所に置く（設定と鍵は app_data_dir のまま）。
-/// 書類フォルダを解決できない・作れない環境では app_data_dir の下に落とす
-/// （履歴の置き場のせいでサイドカーが起動しない、にはしない）。
-fn workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+/// アプリ設定ファイル。保存先の指定だけをここに持つ（AI モデル等は従来どおり
+/// サーバー側 models.json / localStorage）。Graphium の config.json と同じ役割。
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AppConfig {
+    /// 利用者が明示した保存先。未指定なら既定値を使う
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_root: Option<String>,
+}
+
+/// 保存先の現在値と既定値。画面に「いまどこか」を出すため
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceRootInfo {
+    current: String,
+    default_root: String,
+    is_custom: bool,
+}
+
+fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("設定ディレクトリを解決できません: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{} を作れません: {e}", dir.display()))?;
+    Ok(dir.join("config.json"))
+}
+
+fn read_config(app: &tauri::AppHandle) -> AppConfig {
+    // 壊れていても既定で走る。設定ファイルのせいでアプリが起動しない、にはしない
+    let Ok(path) = config_path(app) else { return AppConfig::default() };
+    let Ok(text) = std::fs::read_to_string(&path) else { return AppConfig::default() };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn write_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), String> {
+    let path = config_path(app)?;
+    let text = serde_json::to_string_pretty(config).map_err(|e| format!("設定の変換に失敗: {e}"))?;
+    std::fs::write(&path, text).map_err(|e| format!("設定を書けません: {e}"))
+}
+
+/// 既定の保存先。Graphium の ~/Documents/Graphium と同じく、利用者が Finder から
+/// 見て触れる場所に置く（設定と鍵は app_data_dir のまま）。書類フォルダを
+/// 解決できない環境では app_data_dir の下に落とす。
+fn default_workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Ok(docs) = app.path().document_dir() {
-        let dir = docs.join("geo-logo");
+        return Ok(docs.join("geo-logo"));
+    }
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("データディレクトリを解決できません: {e}"))?
+        .join("workspace"))
+}
+
+/// 実際に使う保存先（設定 > 既定）。フォルダは作って返す。
+///
+/// 指定先が作れないとき（外付けが外れている等）は既定へ落とす。履歴の置き場の
+/// せいでサイドカーが起動しない、にはしない——起動さえすれば画面から
+/// 保存先を選び直せる。
+fn workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Some(custom) = read_config(app).workspace_root.filter(|p| !p.trim().is_empty()) {
+        let dir = PathBuf::from(custom.trim());
         if std::fs::create_dir_all(&dir).is_ok() {
             return Ok(dir);
         }
     }
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("データディレクトリを解決できません: {e}"))?
-        .join("workspace");
+    let dir = default_workspace_dir(app)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{} を作れません: {e}", dir.display()))?;
     Ok(dir)
+}
+
+/// 保存先の現在値・既定値・独自指定かどうか
+#[tauri::command]
+fn get_workspace_root(app: tauri::AppHandle) -> Result<WorkspaceRootInfo, String> {
+    let default_root = default_workspace_dir(&app)?;
+    let configured = read_config(&app).workspace_root.filter(|p| !p.trim().is_empty());
+    let is_custom = configured.is_some();
+    let current = configured.map(PathBuf::from).unwrap_or_else(|| default_root.clone());
+    Ok(WorkspaceRootInfo {
+        current: current.to_string_lossy().to_string(),
+        default_root: default_root.to_string_lossy().to_string(),
+        is_custom,
+    })
+}
+
+/// 保存先を決める。None / 空文字は「既定に戻す」。
+///
+/// 指定先は**ここで作ってみる**。書けない場所を保存してしまうと、次の起動で
+/// 黙って既定に落ち、「変えたのに反映されない」に見えるため。
+#[tauri::command]
+fn set_workspace_root(app: tauri::AppHandle, path: Option<String>) -> Result<WorkspaceRootInfo, String> {
+    let mut config = read_config(&app);
+    match path.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+        Some(p) => {
+            std::fs::create_dir_all(&p).map_err(|e| format!("{p} を使えません: {e}"))?;
+            config.workspace_root = Some(p);
+        }
+        None => config.workspace_root = None,
+    }
+    write_config(&app, &config)?;
+    get_workspace_root(app)
+}
+
+/// フォルダ選択ダイアログ。選ばれなければ None
+#[tauri::command]
+async fn pick_workspace_root(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    // blocking_* は非同期コマンド（＝別スレッド）から呼ぶ。メインスレッドで
+    // 呼ぶと macOS で固まる
+    let picked = app.dialog().file().blocking_pick_folder();
+    Ok(picked.map(|p| p.to_string()))
 }
 
 /// 履歴フォルダを OS のファイルマネージャで開く。パスは Rust 側で決めるので、
@@ -201,7 +295,14 @@ pub fn run() {
     }
 
     builder
-        .invoke_handler(tauri::generate_handler![start_sidecar, stop_sidecar, open_workspace_dir])
+        .invoke_handler(tauri::generate_handler![
+            start_sidecar,
+            stop_sidecar,
+            open_workspace_dir,
+            get_workspace_root,
+            set_workspace_root,
+            pick_workspace_root
+        ])
         .run(tauri::generate_context!())
         .expect("geo-logo の起動に失敗しました");
 }
