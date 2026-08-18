@@ -8,7 +8,17 @@ import {
 } from './core/index'
 import ChatPane from './features/chat/ChatPane'
 import HistoryPane from './features/chat/HistoryPane'
-import { nextId, type Message, type Session } from './features/chat/types'
+import {
+  deleteRemoteSession,
+  fetchRemoteSessions,
+  loadSessions,
+  loadSyncedAt,
+  mergeSessions,
+  putRemoteSession,
+  saveSessions,
+  saveSyncedAt,
+} from './features/chat/session-store'
+import { nextId, titleOf, type Message, type Session } from './features/chat/types'
 import { requestDesigns } from './features/designer/api'
 import { Candidates } from './features/designer/Candidates'
 import { Inspector } from './features/designer/Inspector'
@@ -20,6 +30,7 @@ import { initUpdater } from './lib/updater'
 import { loadSettings, setAiModelsAvailable } from './features/settings/store'
 import { localizeAiError, OPEN_SETTINGS_EVENT } from './lib/ai-error'
 import { RUNTIME_MODE_RESET_EVENT, detectRuntimeMode, type RuntimeMode } from './lib/runtime-mode'
+import { isTauri, openWorkspaceDir } from './lib/workspace'
 
 /**
  * 左に履歴、中央に設計、右に対話。
@@ -39,10 +50,23 @@ function newSession(): Session {
   return { id: nextId('s'), title: '', updatedAt: Date.now(), messages: [], design: null }
 }
 
+/** 前回の履歴があればそこから。無ければ空の会話 1 つ */
+function initialState(): { sessions: Session[]; activeId: string } {
+  const stored = loadSessions()
+  if (!stored) {
+    const s = newSession()
+    return { sessions: [s], activeId: s.id }
+  }
+  return { sessions: stored.sessions, activeId: stored.activeId ?? stored.sessions[0].id }
+}
+
 export default function App() {
-  const [sessions, setSessions] = useState<Session[]>(() => [newSession()])
-  const [activeId, setActiveId] = useState(() => sessions[0].id)
-  const [design, setDesign] = useState<LogoDesign>(samples[0])
+  const [initial] = useState(initialState)
+  const [sessions, setSessions] = useState<Session[]>(initial.sessions)
+  const [activeId, setActiveId] = useState(initial.activeId)
+  const [design, setDesign] = useState<LogoDesign>(
+    () => initial.sessions.find((s) => s.id === initial.activeId)?.design ?? samples[0],
+  )
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<RuntimeMode | null>(null)
@@ -54,6 +78,14 @@ export default function App() {
   const [shaping, setShaping] = useState<Shaping>(SHAPING)
 
   const active = sessions.find((s) => s.id === activeId) ?? sessions[0]
+
+  // 履歴の保存先フォルダ（サーバーが居るとき）。画面の隅に示す
+  const [workspaceDir, setWorkspaceDir] = useState<string | null>(null)
+  // サーバーへ書いた版。同じオブジェクトなら書き直さない
+  const savedRef = useRef(new Map<string, Session>())
+  const syncedRef = useRef(false)
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
 
   // 候補 → 生成時の seed。絵の経路では「選んだ候補の seed + 変えた指示」で
   // 構図を保ったまま磨けるので、どの案から磨くかを選択がそのまま伝える
@@ -82,6 +114,94 @@ export default function App() {
     window.addEventListener(RUNTIME_MODE_RESET_EVENT, again)
     return () => window.removeEventListener(RUNTIME_MODE_RESET_EVENT, again)
   }, [refreshModels])
+
+  // 履歴は変わるたびに localStorage へ書く。静的配信ではこれが実体、
+  // サーバーが居る環境では起動直後のキャッシュ（session-store.ts 冒頭）
+  useEffect(() => {
+    saveSessions(sessions, activeId)
+  }, [sessions, activeId])
+
+  // サーバーが居ると分かったら、フォルダの履歴と突き合わせる（1 回だけ）。
+  // デスクトップ版は同梱サーバーが後から起動するので、mode が後から server に
+  // なる。その時点で走る
+  useEffect(() => {
+    if (mode !== 'server' || syncedRef.current) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const { dir, sessions: remote } = await fetchRemoteSessions()
+        if (cancelled) return
+        const outcome = mergeSessions(sessionsRef.current, remote, loadSyncedAt())
+        let merged = outcome.sessions
+        const { toUpload } = outcome
+        const uploading = new Set(toUpload.map((s) => s.id))
+        for (const s of merged) if (!uploading.has(s.id)) savedRef.current.set(s.id, s)
+        syncedRef.current = true
+        setWorkspaceDir(dir)
+        // 起動直後の空の殻を選んだまま、フォルダの会話が届いたなら、殻は捨てて
+        // 直近の会話に居る（起動して最初に見るのは前回の続きであってほしい）
+        const current = sessionsRef.current.find((s) => s.id === activeId)
+        const newest = merged.find((s) => s.messages.length > 0)
+        let nextActive = merged.find((s) => s.id === activeId) ?? merged[0]
+        if (current && current.messages.length === 0 && newest) {
+          merged = merged.filter((s) => s.id !== current.id)
+          nextActive = newest
+        }
+        // 全部が消えていた（フォルダを空にした等）ら、空の会話を 1 つ置く
+        if (merged.length === 0) {
+          merged = [newSession()]
+          nextActive = merged[0]
+        }
+        setSessions(merged)
+        // 選んでいた会話が無くなっていれば先頭へ。設計もその会話のものに
+        if (nextActive) {
+          setActiveId(nextActive.id)
+          if (nextActive.id !== activeId || design === samples[0]) {
+            setDesign(nextActive.design ?? samples[0])
+          }
+        }
+        // 拾い上げたローカル分は savedRef に無いので、下の効果が書きに行く。
+        // 送るものが無ければここで同期済みの印を付ける（送るものがあるときは
+        // 書けてから付ける——先に付けると、失敗した分が次回「古い」扱いで消える）
+        if (toUpload.length === 0) saveSyncedAt(Date.now())
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // activeId / design は同期の起点でだけ見る。変わるたびに同期し直さない
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
+
+  // 突き合わせが済んだ後は、変わった会話だけをファイルへ書く
+  useEffect(() => {
+    if (!syncedRef.current) return
+    const dirty = sessions.filter(
+      (s) => s.messages.length > 0 && savedRef.current.get(s.id) !== s,
+    )
+    if (dirty.length === 0) return
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void (async () => {
+        for (const s of dirty) {
+          try {
+            await putRemoteSession(s)
+            if (!cancelled) savedRef.current.set(s.id, s)
+          } catch (err) {
+            if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+            return
+          }
+        }
+        saveSyncedAt(Date.now())
+      })()
+    }, 300)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [sessions])
 
   // デスクトップ版だけ、起動時と 24 時間ごとに更新を確認する
   useEffect(() => {
@@ -226,6 +346,35 @@ export default function App() {
       <HistoryPane
         sessions={sessions}
         activeId={activeId}
+        storagePath={workspaceDir}
+        onOpenStorage={
+          isTauri()
+            ? () =>
+                void openWorkspaceDir().catch((err) =>
+                  setError(err instanceof Error ? err.message : String(err)),
+                )
+            : undefined
+        }
+        onDelete={(id) => {
+          const target = sessions.find((s) => s.id === id)
+          if (!target) return
+          if (!window.confirm(`「${titleOf(target)}」を削除しますか？ファイルも消えます。`)) return
+          const rest = sessions.filter((s) => s.id !== id)
+          const next = rest.length > 0 ? rest : [newSession()]
+          setSessions(next)
+          savedRef.current.delete(id)
+          if (id === activeId) {
+            const s = next[0]
+            setActiveId(s.id)
+            setDesign(s.design ?? samples[0])
+            setCandidates([])
+          }
+          if (syncedRef.current) {
+            void deleteRemoteSession(id).catch((err) =>
+              setError(err instanceof Error ? err.message : String(err)),
+            )
+          }
+        }}
         onSelect={(id) => {
           setActiveId(id)
           const s = sessions.find((x) => x.id === id)
