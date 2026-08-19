@@ -38,6 +38,8 @@ export function Inspector({ result, onApply }: Props) {
 
   const snapNotes = result.notes.filter((n) => n.reason === 'snap')
   const solveNotes = result.notes.filter((n) => n.reason === 'constraint')
+  // 計測は「寄せた結果」ではなく「測った事実」。→ で見せると直したように読める
+  const measured = result.notes.filter((n) => n.reason === 'measure')
 
   return (
     <aside className="inspector">
@@ -102,6 +104,30 @@ export function Inspector({ result, onApply }: Props) {
                 ))}
               </ul>
             </div>
+          )}
+
+          <h4>
+            計測 <span className="count">{measured.length}</span>
+          </h4>
+          {measured.length === 0 ? (
+            <p className="muted">測れる輪郭がありませんでした。</p>
+          ) : (
+            <table className="notes">
+              <tbody>
+                {measured.map((n, i) => (
+                  <tr key={i}>
+                    <td className="notes__id">{n.shapeId}</td>
+                    <td className="notes__field">{n.field}</td>
+                    <td className="notes__to" colSpan={3}>
+                      {n.field.includes('ずれ') && !n.field.includes('重心')
+                        ? `${(n.from * 100).toFixed(1)}%`
+                        : fmt(n.from)}
+                      {n.label && <span className="notes__label">{n.label}</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
 
           <h4>

@@ -214,6 +214,15 @@ export const designSchema = z.object({
    * コンパイル時の引数にすると、読み直したときに失われる。
    */
   freehand: z.boolean().optional(),
+  /**
+   * 読み取り元の絵（PNG の data URI）。
+   *
+   * この道具は絵を作り直すのではなく、**絵を読んで作図シートを作る**。だから
+   * 納品物は「元の絵 ＋ 作図シート」であって、復元したベクタで元の絵を置き換え
+   * ない（実測: 素直なベクタ化に忠実度で 2〜5% 負ける。復元は元の絵を超えない）。
+   * 設計と一緒に持ち回ることで、保存した会話を開き直しても元の絵が付いてくる。
+   */
+  source: z.string().max(4_000_000).optional(),
   palette: z.object({
     primary: hexColor.default('#111111'),
     secondary: hexColor.default('#8A8A8A'),

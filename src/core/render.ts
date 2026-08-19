@@ -103,7 +103,7 @@ export function renderBlueprint(
 
   // 紙面では方眼を敷かない。作図円と延長線だけで密度が出る
   const gridLines = sheet ? '' : buildGrid(box, gridStep(design.grid) * M, grid, hair)
-  const goldenGuides = buildGoldenGuides(box, built.artBounds, M, hair)
+  const goldenGuides = buildGoldenGuides(built.artBounds, M, hair)
 
   const shapes = built.construction
     .map((c) => {
@@ -208,22 +208,19 @@ function buildGrid(box: Bounds, step: number, color: string, hair: number): stri
  *   - 原点からの φ 冪の同心円 … 半径の候補集合（units.ts）を可視化したもの
  *   - 完成形の外接矩形と、その黄金分割線 … 全体の比を確認するための線
  */
-function buildGoldenGuides(box: Bounds, art: Bounds, M: number, hair: number): string {
+function buildGoldenGuides(art: Bounds, M: number, hair: number): string {
   const tone = '#C9B896' // 比例の線だけ暖色にして、作図線（寒色）と区別する
   const out: string[] = []
 
-  // 原点からの φ 冪の同心円
-  const maxR = Math.max(
-    Math.hypot(box.x, box.y),
-    Math.hypot(box.x + box.width, box.y + box.height),
-  )
-  for (let n = -2; n <= 6; n++) {
-    const r = Math.pow(PHI, n) * M
-    if (r < M * 0.2 || r > maxR) continue
-    out.push(
-      `<circle cx="0" cy="0" r="${round(r)}" fill="none" stroke="${tone}" stroke-width="${hair}" stroke-opacity="0.55" stroke-dasharray="${round(M * 0.05)} ${round(M * 0.07)}"/>`,
-    )
-  }
+  // 原点からの φ 冪の同心円は**描かない**。
+  //
+  // マークがその比で構成されている保証がどこにも無いのに、比例体系の輪だけを
+  // 重ねると、設計図が「φ で作図しました」と嘘をつく。絵から起こしたマークは
+  // 画素をなぞったものなので、φ に従っているのはむしろ稀（実測: ゴリラは
+  // 6〜8 図形のうち円と呼べるものが 0 件）。
+  //
+  // 設計図に描いてよいのは、**実際に使われた作図**（construction 層の弧の円と
+  // 中心）と、**測った事実**（下の外接矩形と縦横比）だけ。
 
   if (art.width <= 0 || art.height <= 0) return out.join('\n    ')
 

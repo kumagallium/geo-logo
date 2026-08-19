@@ -159,9 +159,10 @@ app.post('/design', async (c) => {
             : {}),
         ...(rationale ? { concept: rationale } : {}),
       })
-      // 描法は設計自身が持つ。保存した設計を読み直しても、整定が筆致を
-      // 規則へ寄せてしまわないように
-      return brush ? { ...built, freehand: true } : built
+      // 元の絵を設計に同梱する。納品物は「元の絵 ＋ 作図シート」で、
+      // 復元したベクタで元の絵を置き換えない
+      const source = `data:image/png;base64,${Buffer.from(png).toString('base64')}`
+      return { ...built, source, ...(brush ? { freehand: true } : {}) }
     })
     // /api/design と同じ形で返す。クライアントは経路の違いを知らなくていい
     return c.json({ design, attempts: [], model: `画像 (${config.command.split(/\s+/)[0].split('/').pop()})`, seed })

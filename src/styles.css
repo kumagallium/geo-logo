@@ -240,6 +240,14 @@ body {
   min-height: 0;
 }
 
+/* 元の絵（ラスタ）。SVG と同じ枠に収める */
+.pane__raster {
+  max-width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  display: block;
+}
+
 .pane__canvas svg {
   /* 高さの上限はビューポートではなく親を基準にする。62vh だけだと、
      ペインが縦に狭いときに SVG が親をはみ出して隣のカードへ重なる
