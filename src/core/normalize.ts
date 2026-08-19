@@ -14,7 +14,7 @@ export type NormalizeNote = {
   from: number
   to: number
   label: string | null
-  reason: 'snap' | 'constraint'
+  reason: 'snap' | 'constraint' | 'measure'
 }
 
 export type NormalizeResult = {

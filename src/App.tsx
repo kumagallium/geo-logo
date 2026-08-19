@@ -486,15 +486,35 @@ export default function App() {
               {candidates.length > 1 && (
                 <Candidates designs={candidates} selected={design} onSelect={setDesign} />
               )}
+              {/* 納品物は「元の絵 ＋ 作図シート」。復元したベクタで元の絵を
+                  置き換えない——復元は元の絵を超えないので（素直なベクタ化に
+                  忠実度で 2〜5% 負ける）、置き換えるだけ損になる */}
+              {compiled.design.source ? (
+                <section className="pane">
+                  <header className="pane__head">
+                    <div>
+                      <h2>元の絵</h2>
+                      <p className="pane__sub">これが納品物。作図シートはこの読み取り</p>
+                    </div>
+                    <a className="btn btn--ghost" href={compiled.design.source} download={`${slug}.png`}>
+                      PNG を保存
+                    </a>
+                  </header>
+                  <div className="pane__canvas">
+                    <img className="pane__raster" src={compiled.design.source} alt="元の絵" />
+                  </div>
+                </section>
+              ) : (
+                <SvgPane
+                  title="完成ロゴ"
+                  subtitle={`${compiled.built.parts.length} パーツ / ${compiled.design.module}px per module`}
+                  svg={compiled.logoSvg}
+                  filename={`${slug}.svg`}
+                />
+              )}
               <SvgPane
-                title="完成ロゴ"
-                subtitle={`${compiled.built.parts.length} パーツ / ${compiled.design.module}px per module`}
-                svg={compiled.logoSvg}
-                filename={`${slug}.svg`}
-              />
-              <SvgPane
-                title="設計図"
-                subtitle="完成ロゴとまったく同じ幾何データから描画"
+                title="作図シート"
+                subtitle="元の絵を読み取って起こした作図。寸法はレポートの計測どおり"
                 svg={compiled.blueprintSvg}
                 filename={`${slug}-blueprint.svg`}
               />
