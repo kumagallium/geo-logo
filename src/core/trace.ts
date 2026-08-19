@@ -893,7 +893,13 @@ export function smoothJoints(segments: ContourSegment[], cornerDegrees = 55): Co
     const outDir = b ? b.t0 : Math.atan2(next.y - cur.y, next.x - cur.x)
     // 折れ角。-π〜π に畳んでから見る
     const turn = Math.abs(Math.atan2(Math.sin(outDir - inDir), Math.cos(outDir - inDir)))
-    if (turn > limit) {
+    // 両側が直線の継ぎ目は、折れが浅くても**頂点**である。そこには曲率が無いのに
+    // 平均を取ると、直線の辺そのものが弧に変えられてしまう（実測: 五角形の肩は
+    // 35° の折れで閾値 55° を下回り、縦の辺が膨らんで釣鐘型になった）。
+    // ごく浅い折れだけは、曲線を折れ線で近似した名残とみなして均す
+    const vertex =
+      prev.r === undefined && cur.r === undefined && turn > (8 * Math.PI) / 180
+    if (turn > limit || vertex) {
       enter.push(inDir)
       exit.push(outDir)
       continue
