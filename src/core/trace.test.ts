@@ -683,7 +683,21 @@ describe('smoothJoints', () => {
     }
   })
 
-  it('閾値を上げれば従来どおり全部丸める', () => {
-    expect(smoothJoints(square, 999)).toHaveLength(8)
+  /**
+   * 閾値は「どこまでの折れを曲線の一部として均すか」を決めるもので、
+   * **無い曲率を作る**ためのものではない。両側が直線の継ぎ目はそこが頂点で、
+   * 均すと直線の辺そのものが弧に変えられてしまう（実測: 五角形の肩は 35° の
+   * 折れで既定の 55° を下回り、縦の辺が膨らんで釣鐘型になった）。
+   */
+  it('閾値を上げても、直線どうしの頂点は丸めない', () => {
+    expect(smoothJoints(square, 999)).toHaveLength(4)
+  })
+
+  it('弧が絡む継ぎ目は、従来どおり閾値で決まる', () => {
+    // 角に見える折れでも、片側が弧なら曲線の一部。閾値を上げれば均される
+    const withArc: ContourSegment[] = square.map((s, i) =>
+      i % 2 === 0 ? { ...s, r: 3 } : s,
+    )
+    expect(smoothJoints(withArc, 999).length).toBeGreaterThan(4)
   })
 })
