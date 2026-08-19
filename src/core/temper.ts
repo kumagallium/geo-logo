@@ -125,14 +125,50 @@ function jointBreak(segs: Seg[]): number {
 }
 
 /**
+ * 弧の中点（直線なら弦の中点）。
+ *
+ * 円かどうかをアンカーだけで測ってはいけない。三角形の頂点 3 つには必ず円が
+ * ぴたりと通るので、辺が直線でも「外れ 0 の円」に見えてしまう。辺の膨らみまで
+ * 見て初めて、円と多角形が分かれる。
+ */
+function arcMid(from: Seg, seg: Seg): { x: number; y: number } {
+  const mx = (from.x + seg.x) / 2
+  const my = (from.y + seg.y) / 2
+  if (seg.r === undefined) return { x: mx, y: my }
+  const dx = seg.x - from.x
+  const dy = seg.y - from.y
+  const d = Math.hypot(dx, dy)
+  if (d < 1e-9) return { x: mx, y: my }
+  const r = Math.max(seg.r, d / 2)
+  const h = Math.sqrt(Math.max(r * r - (d / 2) ** 2, 0))
+  const sign = seg.sweep ? 1 : -1
+  const cx = mx + sign * h * (-dy / d)
+  const cy = my + sign * h * (dx / d)
+  const ux = mx - cx
+  const uy = my - cy
+  const ul = Math.hypot(ux, uy) || 1
+  return { x: cx + (ux / ul) * r, y: cy + (uy / ul) * r }
+}
+
+/** 輪郭を「アンカー＋弧の中点」の点列として見る */
+function outlinePoints(segs: Seg[]): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = []
+  for (let i = 0; i < segs.length; i++) {
+    out.push({ x: segs[i].x, y: segs[i].y })
+    out.push(arcMid(segs[(i - 1 + segs.length) % segs.length], segs[i]))
+  }
+  return out
+}
+
+/**
  * 点列に円を当てる（最小二乗）。中心も半径も推定する。
  *
  * 重心からの距離で測ってはいけない。点の配置が偏っていると重心が円の中心から
  * ずれ、真円でも大きく外れて見える（実測: 6 点の穴で 39% → 中心も推定すれば 4.8%）。
  */
-function fitCircle(points: Seg[]): { cx: number; cy: number; r: number } | null {
+function fitCircle(points: Array<{ x: number; y: number }>): { cx: number; cy: number; r: number } | null {
   const n = points.length
-  if (n < 4) return null
+  if (n < 3) return null
   let sx = 0
   let sy = 0
   let sxx = 0
@@ -180,9 +216,13 @@ function circularize(design: LogoDesign, record: Recorder): void {
   for (let i = 0; i < design.shapes.length; i++) {
     const s = design.shapes[i]
     if (s.kind !== 'contour') continue
-    const c = fitCircle(s.segments)
+    // アンカーだけでなく辺の膨らみも含めて測る。点が 3 つでも、輪郭として
+    // 円なら円と言える（実測: 環に並ぶ小さな点は 3〜4 点で、アンカーだけの
+    // 判定では円にならず、角の残った塊のまま残っていた）
+    const pts = outlinePoints(s.segments)
+    const c = fitCircle(pts)
     if (!c) continue
-    const worst = Math.max(...s.segments.map((q) => Math.abs(Math.hypot(q.x - c.cx, q.y - c.cy) - c.r)))
+    const worst = Math.max(...pts.map((q) => Math.abs(Math.hypot(q.x - c.cx, q.y - c.cy) - c.r)))
     const off = worst / c.r
     if (off > CIRCLE_TOL) continue
     design.shapes[i] = {

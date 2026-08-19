@@ -215,6 +215,33 @@ describe('整定', () => {
     expect(design.shapes[0].kind).toBe('contour')
   })
 
+  it('点が 3 つでも、輪郭として円なら円にする', () => {
+    // 環に並ぶ小さな点は 3〜4 点で当てはまる。アンカーだけ見ていた頃は
+    // 円にならず、角の残った塊のまま残っていた
+    const R = 0.12
+    const segs: Seg[] = Array.from({ length: 3 }, (_, i) => {
+      const t = ((i + 1) / 3) * Math.PI * 2
+      return { x: R * Math.cos(t), y: R * Math.sin(t), r: R, sweep: true }
+    })
+    const design = designWith([segs])
+    const { record } = collect()
+    temper(design, record)
+    expect(design.shapes[0].kind).toBe('circle')
+  })
+
+  it('三角形は円にしない（頂点だけ見ると円が通ってしまう）', () => {
+    // 3 頂点にはかならず外接円が通る。辺が直線なら、それは円ではない
+    const R = 0.5
+    const segs: Seg[] = Array.from({ length: 3 }, (_, i) => {
+      const t = ((i + 1) / 3) * Math.PI * 2
+      return { x: R * Math.cos(t), y: R * Math.sin(t), sweep: true }
+    })
+    const design = designWith([segs])
+    const { record } = collect()
+    temper(design, record)
+    expect(design.shapes[0].kind).toBe('contour')
+  })
+
   it('輪郭を含まない設計には何もしない', () => {
     const design = {
       name: 'x',
