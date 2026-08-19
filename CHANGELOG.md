@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.18](https://github.com/kumagallium/geo-logo/compare/v0.1.17...v0.1.18) - 2026-08-19
+
+- feat: 形の整定（ほぼ円なら円にする）と、手描きの除外 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/50
+
 ## [v0.1.17](https://github.com/kumagallium/geo-logo/compare/v0.1.16...v0.1.17) - 2026-08-19
 
 - feat: 4 案のうち 1 案を筆致で描く（ゆらぎを偶然から様式へ） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/48
