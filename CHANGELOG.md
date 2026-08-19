@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.20](https://github.com/kumagallium/geo-logo/compare/v0.1.19...v0.1.20) - 2026-08-19
+
+- fix: 直線どうしの頂点を丸めない（釣鐘型になる欠陥） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/54
+
 ## [v0.1.19](https://github.com/kumagallium/geo-logo/compare/v0.1.18...v0.1.19) - 2026-08-19
 
 - feat: 対称性をコンセプトに宣言させ、小さな点も円にする by @kumagallium in https://github.com/kumagallium/geo-logo/pull/52
