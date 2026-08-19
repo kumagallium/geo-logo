@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.17](https://github.com/kumagallium/geo-logo/compare/v0.1.16...v0.1.17) - 2026-08-19
+
+- feat: 4 案のうち 1 案を筆致で描く（ゆらぎを偶然から様式へ） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/48
+
 ## [v0.1.16](https://github.com/kumagallium/geo-logo/compare/v0.1.15...v0.1.16) - 2026-08-18
 
 - fix: ほぼ一直線の連なりを 1 本の直線へ引き直す（辺の波打ちを解消） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/46
