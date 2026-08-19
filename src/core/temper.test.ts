@@ -56,9 +56,11 @@ describe('整定', () => {
     // 弧半径と点の乗る円を一致させる（＝継ぎ目が滑らか）。整定は滑らかさを
     // 損なう寄せを避けるので、そこを崩す差は寄せられない——それが正しい
     const design = designWith([
-      ring(1.003, 8, 1.003),
-      ring(0.997, 8, 0.997),
-      ring(1.0, 8, 1.0),
+      // 楕円にする。真円だと「円へ整形」されて contour でなくなり、
+      // ここで見たい半径の統合が観測できない
+      ring(1.001, 8, 1.001, 0, 0, 0.7),
+      ring(0.999, 8, 0.999, 0, 0, 0.7),
+      ring(1.0, 8, 1.0, 0, 0, 0.7),
     ])
     const { record } = collect()
     temper(design, record)
@@ -75,7 +77,7 @@ describe('整定', () => {
 
   it('小さな半径を比率で守る（大きく動かさない）', () => {
     // 瞳のような小さい弧。絶対差で丸めると数十%動いてしまう
-    const design = designWith([ring(0.06, 8, 0.071)])
+    const design = designWith([ring(0.06, 8, 0.071, 0, 0, 0.7)])
     const { record } = collect()
     temper(design, record)
 
@@ -105,7 +107,7 @@ describe('整定', () => {
 
   it('墨の重心を原点へ置く（穴は差し引く）', () => {
     // 右へ寄せた外形。重心が原点に来るよう平行移動されるはず
-    const design = designWith([ring(1, 8, 1.1, 3, 0)])
+    const design = designWith([ring(1, 8, 1.1, 3, 0, 0.7)])
     const { record } = collect()
     temper(design, record)
 
@@ -139,7 +141,7 @@ describe('整定', () => {
     const n = 10
     const segs: Seg[] = Array.from({ length: n }, (_, i) => {
       const t = ((i + 1) / n) * Math.PI * 2
-      return { x: R * Math.cos(t), y: R * Math.sin(t), r: R, sweep: true }
+      return { x: R * Math.cos(t), y: R * 0.7 * Math.sin(t), r: R, sweep: true }
     })
     const design = designWith([segs])
 
@@ -171,6 +173,46 @@ describe('整定', () => {
     const after = brk((design.shapes[0] as { segments: Seg[] }).segments)
 
     expect(after).toBeLessThanOrEqual(before + (1.01 * Math.PI) / 180)
+  })
+
+  it('ほぼ円の輪郭は、円そのものに置き換わる', () => {
+    // 真円から 4% ずらした輪郭。円のつもりで描かれたものは円にする
+    const n = 16
+    const segs: Seg[] = Array.from({ length: n }, (_, i) => {
+      const t = ((i + 1) / n) * Math.PI * 2
+      const r = 1 + (i % 2 === 0 ? 0.04 : -0.04)
+      return { x: r * Math.cos(t), y: r * Math.sin(t), r: 1.05, sweep: true }
+    })
+    const design = designWith([segs])
+    const { notes, record } = collect()
+    temper(design, record)
+
+    expect(design.shapes[0].kind).toBe('circle')
+    const c = design.shapes[0] as unknown as { r: number; pinned?: boolean }
+    expect(c.r).toBeCloseTo(1, 1)
+    // 置いた位置がそのまま答え。この後の座標スナップで動かされては困る
+    expect(c.pinned).toBe(true)
+    expect(notes.some((x) => x.field === '円へ整形')).toBe(true)
+  })
+
+  it('円と言えない形は輪郭のまま（卵や角丸は潰さない）', () => {
+    const design = designWith([ring(1, 16, 1.2, 0, 0, 0.6)])
+    const { record } = collect()
+    temper(design, record)
+    expect(design.shapes[0].kind).toBe('contour')
+  })
+
+  it('手描き（freehand）は規則へ寄せない', () => {
+    const n = 16
+    const segs: Seg[] = Array.from({ length: n }, (_, i) => {
+      const t = ((i + 1) / n) * Math.PI * 2
+      return { x: Math.cos(t), y: Math.sin(t), r: 1, sweep: true }
+    })
+    const design = { ...designWith([segs]), freehand: true } as LogoDesign
+    const { record } = collect()
+    temper(design, record)
+    // 筆致のゆらぎは表現そのもの。円に潰さない
+    expect(design.shapes[0].kind).toBe('contour')
   })
 
   it('輪郭を含まない設計には何もしない', () => {

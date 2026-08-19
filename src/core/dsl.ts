@@ -202,6 +202,18 @@ export const designSchema = z.object({
   concept: z.string().max(2000).describe('設計意図を 1〜3 文で'),
   module: z.number().finite().positive().max(1024).default(64).describe('1 モジュールの px 値'),
   grid: z.enum(['golden', 'sqrt2', 'square', 'isometric']).default('golden'),
+  /**
+   * 手描き（筆致）として扱う。
+   *
+   * 整定は「ほぼ○○なら、まさに○○にする」——ほぼ円なら円に、ほぼ直線なら
+   * 直線に寄せる。これは**規則的であろうとした絵**にだけ正しい。筆で一息に
+   * 引いた線は、太細もゆらぎも意図された表現なので、規則へ寄せると死ぬ
+   * （実測: 円相が真円 3 つに潰れ、太細もかすれも消えた）。
+   *
+   * 設計は保存され後から再コンパイルされるので、この区別は**設計自身が持つ**。
+   * コンパイル時の引数にすると、読み直したときに失われる。
+   */
+  freehand: z.boolean().optional(),
   palette: z.object({
     primary: hexColor.default('#111111'),
     secondary: hexColor.default('#8A8A8A'),
