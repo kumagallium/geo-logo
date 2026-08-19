@@ -2,27 +2,33 @@ import type { Contour, LogoDesign } from './dsl'
 import { PHI, radiusCandidates } from './units'
 
 /**
- * 整定（temper）——絵から起こした輪郭に、比例の規律を後から通す。
+ * 整定（temper）——絵から起こした輪郭を、規則の側へ寄せ直す。
  *
- * 順方向の設計（LLM が幾何を書く）は normalize が半径や座標をモジュール系へ
- * 丸めるが、**contour には効いていなかった**。画像経路のマークは画素をなぞった
- * ものなので、半径も位置も画素の偶然そのままで、設計図に重ねた黄金比の
- * ガイドは実際には何も規定していない飾りだった（実測: レポートの
- * 「寸法のスナップ」が常に 0 件）。
+ * この道具は**なぞる**のではなく**作図し直す**ものである。ラフには「本当は
+ * こうしたかった」規則が透けており、清書とはそれを見抜いて言い切ることを言う。
+ * 実装としてはひとつの方針で貫ける:
  *
- * ここで効かせる三つは、いずれも「機械的に正しい」より「正しく見える」を
- * 選ぶ古典的な作法である:
+ *     「ほぼ○○」なら「まさに○○」にする。
+ *     判定はマークの大きさに対する相対誤差で測り、寄せた事実は必ず記録する。
  *
- *   1. 半径の統合 … 近い半径どうしを 1 つに寄せ、さらに φ 冪・単純分数へ寄せる。
- *      整って見えることの大半は「寸法が少数の値だけで構成されている」ことに
- *      由来する（units.ts の思想。線幅について unifyStrokeWidths が既に同じ
- *      ことをしている）。実測では 1 つのマークに半径が 6〜8 種あった。
- *   2. 比例の整定 … 全体の縦横比が正準比（1:1 / φ / √2 / 3:2 / 2:1）の近くに
- *      あるなら、そこへ寄せて**正確に**その比にする。近くにある時しか動かさない
- *      ので、上限 2.5% の微差にとどまる（歪みとして知覚されない範囲）。
- *   3. 光学的中心 … 外接矩形の中心ではなく**墨の重心**を原点へ置く。紙面の
- *      中心に見えるのは重心のほうで、これはロゴ制作で最も普遍的な視覚補正。
- *      設計図の同心円は原点から描かれるので、これで初めて図と合う。
+ * 何を規則とみなすかで三つの層に分かれるが、考え方は同じもの:
+ *
+ *   - 寸法 … 半径を少数の値へ（φ 冪・単純分数）。整って見えることの大半は
+ *     「寸法が少数の値だけで構成されている」ことに由来する（units.ts の思想）。
+ *   - 比例 … 全体の縦横比が正準比（1:1 / φ / √2 / 3:2）の近くにあるなら、
+ *     そこへ寄せて正確にその比にする。
+ *   - 形 …… ほぼ円の輪郭は円にする。円を「ほぼ円のままの自由曲線」で置くと、
+ *     どれだけ寸法を整えても濁って見える（実測: 鍵の弓部の穴が真円から 4.8%
+ *     ずれ、円ではなく角の取れた塊に見えた）。
+ *
+ * 加えて、幾何ではなく見え方の側の作法をひとつ:
+ *
+ *   - 光学的中心 … 外接矩形の中心ではなく**墨の重心**を原点へ置く。紙面の
+ *     中心に見えるのは重心のほうで、これはロゴ制作で最も普遍的な視覚補正。
+ *     設計図の同心円は原点から描かれるので、これで初めて図と合う。
+ *
+ * 「ほぼ直線の連なりは直線にする」も同じ方針だが、当てはめの直後・継ぎ目を
+ * 均す前に効かせる必要があるので core/trace.ts の straightenRuns に置いてある。
  *
  * 弧は両端点を通る円弧として保たれる（半径だけを動かし、端点は動かさない）。
  * 半径が弦の半分を下回ると円弧が成立しないので、その手前で必ず止める。
@@ -50,6 +56,15 @@ const CANONICAL_RATIOS: Array<{ value: number; label: string }> = [
   { value: 2, label: '1:2' },
   { value: 0.5, label: '2:1' },
 ]
+
+/**
+ * 円とみなす上限（自分の半径に対する外れの割合）。
+ *
+ * 生成画像の円は素で数 % ずれる（実測: 鍵の弓部の穴が 4.8%）。厳しくすると
+ * 円が円にならず、緩めると卵や角丸の四角まで円に潰れる。8% は「円のつもりで
+ * 描かれたもの」と「別の形」の間にある。
+ */
+const CIRCLE_TOL = 0.08
 
 /** 近い半径を 1 つに寄せる幅。これ以上離れていれば意図的な使い分けとみなす */
 const RADIUS_CLUSTER = 0.08
@@ -108,6 +123,83 @@ function jointBreak(segs: Seg[]): number {
   }
   return sum
 }
+
+/**
+ * 点列に円を当てる（最小二乗）。中心も半径も推定する。
+ *
+ * 重心からの距離で測ってはいけない。点の配置が偏っていると重心が円の中心から
+ * ずれ、真円でも大きく外れて見える（実測: 6 点の穴で 39% → 中心も推定すれば 4.8%）。
+ */
+function fitCircle(points: Seg[]): { cx: number; cy: number; r: number } | null {
+  const n = points.length
+  if (n < 4) return null
+  let sx = 0
+  let sy = 0
+  let sxx = 0
+  let syy = 0
+  let sxy = 0
+  let sxz = 0
+  let syz = 0
+  let sz = 0
+  for (const q of points) {
+    const z = q.x * q.x + q.y * q.y
+    sx += q.x
+    sy += q.y
+    sxx += q.x * q.x
+    syy += q.y * q.y
+    sxy += q.x * q.y
+    sxz += q.x * z
+    syz += q.y * z
+    sz += z
+  }
+  const a11 = 2 * (sxx - (sx * sx) / n)
+  const a12 = 2 * (sxy - (sx * sy) / n)
+  const a22 = 2 * (syy - (sy * sy) / n)
+  const b1 = sxz - (sx * sz) / n
+  const b2 = syz - (sy * sz) / n
+  const det = a11 * a22 - a12 * a12
+  if (Math.abs(det) < 1e-12) return null
+  const cx = (b1 * a22 - b2 * a12) / det
+  const cy = (a11 * b2 - a12 * b1) / det
+  const r = points.reduce((s, q) => s + Math.hypot(q.x - cx, q.y - cy), 0) / n
+  return r > 1e-9 ? { cx, cy, r } : null
+}
+
+/**
+ * ほぼ円の輪郭を、円そのものに置き換える。
+ *
+ * この道具の値打ちは「円と線で作図する」ことにある。円のつもりで描かれたものを
+ * 「ほぼ円の自由曲線」のまま残すと、寸法をどれだけ整えても濁って見えるし、
+ * 設計図にも円が現れない。DSL には円の種類があるのだから、円は円として置く。
+ *
+ * 置き換えると輪郭は 1 つの値（半径）になるので、この後の半径の統合や
+ * normalize のモジュール系スナップがそのまま効く——規則の側へ寄せるほど、
+ * 後段の規律が噛み合う。
+ */
+function circularize(design: LogoDesign, record: Recorder): void {
+  for (let i = 0; i < design.shapes.length; i++) {
+    const s = design.shapes[i]
+    if (s.kind !== 'contour') continue
+    const c = fitCircle(s.segments)
+    if (!c) continue
+    const worst = Math.max(...s.segments.map((q) => Math.abs(Math.hypot(q.x - c.cx, q.y - c.cy) - c.r)))
+    const off = worst / c.r
+    if (off > CIRCLE_TOL) continue
+    design.shapes[i] = {
+      kind: 'circle',
+      id: s.id,
+      cx: round(c.cx),
+      cy: round(c.cy),
+      r: round(c.r),
+      // 当てた位置がそのまま答え。この後 normalize の座標スナップに動かされると、
+      // 弓部と穴のような**関係**が崩れる（穴だけがグリッドへ寄って偏心する）
+      pinned: true,
+    } as LogoDesign['shapes'][number]
+    record(s.id, '円へ整形', off, 0, `r=${round(c.r)}`, 'snap')
+  }
+}
+
+const round = (v: number) => Math.round(v * 1000) / 1000
 
 /**
  * 半径を少数の値へ寄せる。
@@ -339,7 +431,18 @@ function centerOptically(design: LogoDesign, record: Recorder): void {
  */
 export function temper(design: LogoDesign, record: Recorder): void {
   if (contoursOf(design).length === 0) return
+
+  // 手描きの絵は規則へ寄せない。ゆらぎが表現そのものなので、円にすれば筆勢が
+  // 消える（実測: 円相が真円 3 つに潰れた）。ただし置き方と全体の枠は描いた線に
+  // 触らないので、そこだけは通す
+  // 比例 → 寸法 の順。比例の整定は弦の伸び率で半径を動かすので、先に寸法を
+  // 揃えても後からばらける（実測: 1 つに寄せた半径が 1.0025 と 0.9957 に分裂）。
+  // 形を決めてから、その形の寸法を量る
   temperProportion(design, record)
-  harmonizeRadii(design, record)
+  if (!design.freehand) harmonizeRadii(design, record)
   centerOptically(design, record)
+  // 円にするのは**最後**。比例も中心合わせも輪郭だけを動かすので、先に円へ
+  // 変えると、その円だけが取り残されて位置関係が壊れる（実測: 鍵の弓部の穴が
+  // 上へずれて三日月になった）。全部動かし終えてから、形を言い切る
+  if (!design.freehand) circularize(design, record)
 }

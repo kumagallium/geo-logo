@@ -140,16 +140,20 @@ app.post('/design', async (c) => {
       // 許容誤差 0.008: 0.02 だと彫った眉や V 字の目が丸められ、絵の「切れ」が
       // 消える（実測: 同じ絵で一致 92.4% → 95.4%、頂点 68 → 86 の増で済む）。
       // マークの顔つきが商品なので、DSL が少し重くなるほうを取る
-      return reconstruct(img.gray, img.width, img.height, {
+      const brush = body?.brush === true
+      const built = reconstruct(img.gray, img.width, img.height, {
         tolerance: 0.008,
         radii: 8,
         name: name.slice(0, 40),
         // 筆致の案は**左右対称に均してはいけない**。筆の勢いは片側が太く片側が
         // 細いことそのもので、対称化すると太細もかすれも消えて、のっぺりした
         // 均一の輪になる（実測: 円相が幅の変わらない輪になり、図形数も 12 → 3）
-        ...(body?.brush === true ? { symmetrize: false as const, symmetry: false as const } : {}),
+        ...(brush ? { symmetrize: false as const, symmetry: false as const } : {}),
         ...(rationale ? { concept: rationale } : {}),
       })
+      // 描法は設計自身が持つ。保存した設計を読み直しても、整定が筆致を
+      // 規則へ寄せてしまわないように
+      return brush ? { ...built, freehand: true } : built
     })
     // /api/design と同じ形で返す。クライアントは経路の違いを知らなくていい
     return c.json({ design, attempts: [], model: `画像 (${config.command.split(/\s+/)[0].split('/').pop()})`, seed })
