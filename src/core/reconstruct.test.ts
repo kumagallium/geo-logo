@@ -9,6 +9,7 @@ import {
   contoursFromRaster,
   fidelity,
   reconstruct,
+  rotateSymmetrizeMask,
   symmetrizeMask,
 } from './reconstruct'
 import { fitToModule, traceArcs } from './trace'
@@ -306,5 +307,120 @@ describe('対称の強制', () => {
       }
     }
     expect(same / n).toBeGreaterThan(0.99)
+  })
+})
+
+describe('回す対称の強制', () => {
+  /** 中心 (cx,cy) の周りに、種の形を k 回並べたマスク。歪みは wobble で入れる */
+  const rosette = (
+    size: number,
+    fold: number,
+    wobble: (m: number) => { dr: number; da: number },
+  ): Uint8Array => {
+    const mask = new Uint8Array(size * size)
+    const c = size / 2
+    for (let m = 0; m < fold; m++) {
+      const { dr, da } = wobble(m)
+      const a = (2 * Math.PI * m) / fold + da
+      const r = size * 0.28 + dr
+      const px = c + r * Math.cos(a)
+      const py = c + r * Math.sin(a)
+      const rad = size * 0.12
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          if ((x + 0.5 - px) ** 2 + (y + 0.5 - py) ** 2 < rad * rad) mask[y * size + x] = 1
+        }
+      }
+    }
+    return mask
+  }
+
+  it('少しだけ崩れた 5 弁を、5 回対称と見て揃える', () => {
+    const S = 256
+    // 1 枚だけ外へずらし、1 枚だけ角度をずらす。生成画像で実際に起きる崩れ方
+    const mask = rosette(S, 5, (m) => ({
+      dr: m === 1 ? S * 0.03 : 0,
+      da: m === 3 ? 0.12 : 0,
+    }))
+    const rot = rotateSymmetrizeMask(mask, S, S)
+    expect(rot.fold).toBe(5)
+
+    // 実際に 5 回対称になっている（1 区画ぶん回して重ねる）
+    const a = (2 * Math.PI) / 5
+    const cx = (rot.center as { x: number }).x
+    const cy = (rot.center as { y: number }).y
+    let hit = 0
+    let seen = 0
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (!rot.ink[y * S + x]) continue
+        seen++
+        const dx = x - cx
+        const dy = y - cy
+        const rx = Math.round(cx + dx * Math.cos(a) - dy * Math.sin(a))
+        const ry = Math.round(cy + dx * Math.sin(a) + dy * Math.cos(a))
+        if (rx >= 0 && ry >= 0 && rx < S && ry < S && rot.ink[ry * S + rx]) hit++
+      }
+    }
+    expect(hit / seen).toBeGreaterThan(0.98)
+  })
+
+  it('丸いだけのマークは、どの回数でも高く出るので採らない', () => {
+    // 円板は C∞ なので 2〜8 回すべてで一致する。絶対値だけで判定すると
+    // 何かしらの回数が当たってしまう
+    const S = 192
+    const mask = new Uint8Array(S * S)
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (disc(S / 2, S / 2, S * 0.4)(x, y)) mask[y * S + x] = 1
+      }
+    }
+    const rot = rotateSymmetrizeMask(mask, S, S)
+    expect(rot.fold).toBeNull()
+    expect(rot.ink).toBe(mask)
+  })
+
+  it('回転の群に乗らない部品がある構成には手を出さない', () => {
+    // 5 回対称の花に、衛星の点を 1 つ足したもの。区画を写すとこの点が消える。
+    // 実測（生成した星＋点）で実際に起きたので、写した結果の合いで止める
+    const S = 256
+    const mask = rosette(S, 5, () => ({ dr: 0, da: 0 }))
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (disc(S * 0.86, S * 0.14, S * 0.1)(x, y)) mask[y * S + x] = 1
+      }
+    }
+    const rot = rotateSymmetrizeMask(mask, S, S)
+    expect(rot.fold).toBeNull()
+  })
+
+  it('非対称なマークには手を出さない', () => {
+    const S = 160
+    const mask = new Uint8Array(S * S)
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        if (disc(S * 0.6, S * 0.5, S * 0.25)(x, y) || (x > 20 && x < 40 && y > 30 && y < 44)) {
+          mask[y * S + x] = 1
+        }
+      }
+    }
+    expect(rotateSymmetrizeMask(mask, S, S).fold).toBeNull()
+  })
+
+  it('回転対称を切ることができる', () => {
+    const S = 256
+    const g = new Uint8Array(S * S).fill(255)
+    const mask = rosette(S, 5, (m) => ({ dr: m === 1 ? S * 0.03 : 0, da: 0 }))
+    for (let i = 0; i < mask.length; i++) if (mask[i]) g[i] = 0
+    const on = contoursFromRaster(g, S, S, { rotational: 'auto' })
+    const off = contoursFromRaster(g, S, S, { rotational: false })
+    // 切ったほうは、ずらした 1 枚がずれたまま残る＝輪郭の形が揃わない
+    const spanOf = (pts: { x: number; y: number }[]) => {
+      const xs = pts.map((p) => p.x)
+      return Math.max(...xs) - Math.min(...xs)
+    }
+    const spans = (cs: typeof on) => cs.map((c) => spanOf(c.points)).sort((a, b) => a - b)
+    const width = (v: number[]) => v[v.length - 1] - v[0]
+    expect(width(spans(on))).toBeLessThan(width(spans(off)))
   })
 })

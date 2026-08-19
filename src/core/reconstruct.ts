@@ -249,6 +249,20 @@ export type RasterOptions = {
    * 画素で対称化する**。片側をもう片側に写すので、位相まで揃う。
    */
   symmetrize?: boolean | 'auto'
+  /**
+   * 回す対称に寄せるか。**既定は off**。`'auto'` で自動判定、数を渡せばその
+   * 回数で強制する。
+   *
+   * 鏡像は `symmetrizeMask` で揃うが、花・輪・車輪のような**回す対称**は
+   * 手つかずだった。実測: 生成した桜は 5 回対称 84.6% で、揃えると 99.5% まで
+   * 上がり、花弁の大きさと間隔が揃う。
+   *
+   * それでも既定を off にしてあるのは、**この経路で絵そのものを書き換えない**
+   * と決めたため。設計図は絵に上乗せする説明として出し、絵は動かさない。
+   * 揃えると花芯が荒れる（区画が細くなる中心付近で、種が motif の途中で切れる）
+   * ことも、既定にしない理由のひとつ。
+   */
+  rotational?: boolean | 'auto' | number
 }
 
 /**
@@ -338,6 +352,212 @@ export function symmetrizeMask(
   return { ink: out, axis: best2 / 2 }
 }
 
+/**
+ * マスクの回転対称を探し、対称なら 1 区画を写して完全に対称にする。
+ *
+ * 鏡像は `symmetrizeMask` で既に揃えているが、**回す対称は手つかず**だった。
+ * 実測（手元の生成画像 26 枚）: 桜が 5 回対称 85%、他は 50〜60% で地に沈む。
+ * 15% のずれは目に見える——花弁の大きさと間隔が揃っていない。
+ *
+ * 直し方は鏡像と同じ考え方にする。**多数決は使わない。** 5 枚を重ねて過半で
+ * 決めると、角度のずれた内部の白どうしが打ち消し合って粒になる（実測: 桜の
+ * 花芯の切れ込みが消えて点の輪になった）。1 区画を選んで k 回写す。
+ *
+ * どの区画を種にするかは、写した結果が元の絵と最も合うもので決める。
+ *
+ * 「境目が墨の薄いところを通る区画を選ぶ」も試したが、**逆効果だった**
+ * （実測: 桜で一致 91.5% → 87.6%。写した結果の合いは 90.8% で変わらないのに、
+ * 下流の輪郭の取り出しだけが悪くなる）。合いだけで選ぶ。
+ */
+export function rotateSymmetrizeMask(
+  ink: Uint8Array,
+  width: number,
+  height: number,
+  options: { fold?: number; threshold?: number; margin?: number; floor?: number } = {},
+): { ink: Uint8Array; fold: number | null; center: Vec | null; score: number; agree: number } {
+  const none = { ink, fold: null, center: null, score: 0, agree: 0 }
+  let x0 = width
+  let x1 = -1
+  let y0 = height
+  let y1 = -1
+  let sx = 0
+  let sy = 0
+  let count = 0
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!ink[y * width + x]) continue
+      count++
+      sx += x
+      sy += y
+      if (x < x0) x0 = x
+      if (x > x1) x1 = x
+      if (y < y0) y0 = y
+      if (y > y1) y1 = y
+    }
+  }
+  if (count < 64) return none
+
+  const span = Math.max(x1 - x0, y1 - y0)
+  const stride = Math.max(1, Math.floor(Math.sqrt(count / 20000)))
+  // 鏡像側と同じ 2% の緩み。厳密一致だと、素で数画素ずれた生成画像が落ちる
+  const slack = Math.max(1, Math.round(span * 0.02))
+  // 緩みは**先に膨らませて 1 回の参照にする**。中心を探すために同じ判定を
+  // 数百回繰り返すので、そのつど近傍を舐めると 512 画素角で分単位になる
+  // （実測: 26 枚の判定が 2 分で終わらなかった）。縦横に分けた 1 次元の
+  // 膨張なので、正方の近傍と同じ結果が O(画素数) で出る
+  const wide = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!ink[y * width + x]) continue
+      const lo = Math.max(0, x - slack)
+      const hi = Math.min(width - 1, x + slack)
+      for (let xx = lo; xx <= hi; xx++) wide[y * width + xx] = 1
+    }
+  }
+  const dilated = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!wide[y * width + x]) continue
+      const lo = Math.max(0, y - slack)
+      const hi = Math.min(height - 1, y + slack)
+      for (let yy = lo; yy <= hi; yy++) dilated[yy * width + x] = 1
+    }
+  }
+  const near = (x: number, y: number): boolean => {
+    const cx = Math.round(x)
+    const cy = Math.round(y)
+    return cx >= 0 && cy >= 0 && cx < width && cy < height && dilated[cy * width + cx] === 1
+  }
+
+  /** k 回対称の度合い。墨の画素を 1 区画ぶん回して、行き先に墨があるか */
+  const score = (k: number, cx: number, cy: number): number => {
+    const a = (2 * Math.PI) / k
+    const cos = Math.cos(a)
+    const sin = Math.sin(a)
+    let hit = 0
+    let seen = 0
+    for (let y = y0; y <= y1; y += stride) {
+      for (let x = x0; x <= x1; x += stride) {
+        if (!ink[y * width + x]) continue
+        seen++
+        const dx = x - cx
+        const dy = y - cy
+        if (near(cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)) hit++
+      }
+    }
+    return seen > 0 ? hit / seen : 0
+  }
+
+  // 回転中心は墨の重心の近くにあるが、そのものではない（花弁 1 枚が大きいだけで
+  // ずれる）。重心の周りを探す
+  const findCenter = (k: number): { cx: number; cy: number; s: number } => {
+    let best = { cx: sx / count, cy: sy / count, s: 0 }
+    for (let step = span * 0.04; step >= span * 0.005; step /= 2) {
+      const from = { ...best }
+      for (let j = -2; j <= 2; j++) {
+        for (let i = -2; i <= 2; i++) {
+          const cx = from.cx + i * step
+          const cy = from.cy + j * step
+          const s = score(k, cx, cy)
+          if (s > best.s) best = { cx, cy, s }
+        }
+      }
+    }
+    return best
+  }
+
+  // 何回対称かは**大きい k から**見る。6 回対称のマークは 2 回でも 3 回でも
+  // 高く出るので、点数の最大を採ると 2 回で止まる。
+  //
+  // ただし「点数が閾値を超えた最初の k」で確定させてはいけない。実測: 桜は
+  // 6 回でも 91% 出るので、真の 5 回（99%）の手前で 6 回に決まり、そのあと
+  // 区画を写した結果が元の絵と 67% しか合わずに丸ごと棄却されていた。
+  // **写してみた結果で決める**——点数は候補を絞るためだけに使う。
+  const threshold = options.threshold ?? 0.95
+  const margin = options.margin ?? 0.06
+  const floor = options.floor ?? 0.85
+  const folds = options.fold !== undefined ? [options.fold] : [8, 7, 6, 5, 4, 3, 2]
+
+  /** 種の区画を theta0 から取り、k 回写したマスク */
+  const replicate = (fold: number, cx: number, cy: number, theta0: number): Uint8Array => {
+    const seg = (2 * Math.PI) / fold
+    const out = new Uint8Array(width * height)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const dx = x - cx
+        const dy = y - cy
+        let a = Math.atan2(dy, dx) - theta0
+        a = ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+        // 種の区画へ戻す向きに回す
+        const back = -Math.floor(a / seg) * seg
+        const rx = Math.round(cx + dx * Math.cos(back) - dy * Math.sin(back))
+        const ry = Math.round(cy + dx * Math.sin(back) + dy * Math.cos(back))
+        if (rx >= 0 && ry >= 0 && rx < width && ry < height && ink[ry * width + rx]) {
+          out[y * width + x] = 1
+        }
+      }
+    }
+    return out
+  }
+
+  const agree = (cand: Uint8Array): number => {
+    let same = 0
+    let seen = 0
+    for (let y = y0; y <= y1; y += stride) {
+      for (let x = x0; x <= x1; x += stride) {
+        const a = ink[y * width + x] === 1
+        const b = cand[y * width + x] === 1
+        if (!a && !b) continue
+        seen++
+        if (a === b) same++
+      }
+    }
+    return seen > 0 ? same / seen : 0
+  }
+
+  // 先に全部の回数を測る。**丸いマークは何回でも高く出る**ので、点数の絶対値
+  // だけでは分けられない（実測: 向日葵と輪は 2〜8 回のどれもが 97〜100%）。
+  // 他の回数から抜きん出ているかで見る
+  const found = new Map<number, { cx: number; cy: number; s: number }>()
+  for (const fold of folds) found.set(fold, findCenter(fold))
+  const stands = (fold: number): boolean => {
+    const others = folds.filter((k) => k !== fold).map((k) => (found.get(k) as { s: number }).s)
+    if (others.length === 0) return true
+    const sorted = [...others].sort((a, b) => a - b)
+    const mid = sorted.length % 2 === 1
+      ? sorted[(sorted.length - 1) / 2]
+      : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+    return (found.get(fold) as { s: number }).s - mid >= margin
+  }
+
+  let fallback = { score: 0, agree: 0 }
+  for (const fold of folds) {
+    const c = found.get(fold) as { cx: number; cy: number; s: number }
+    if (options.fold === undefined && (c.s < threshold || !stands(fold))) continue
+    // 種の区画を一周ぶん試す
+    let best: { ink: Uint8Array; agree: number } | null = null
+    const tries = 12 * fold
+    for (let t = 0; t < tries; t++) {
+      const theta0 = (2 * Math.PI * t) / tries
+      const cand = replicate(fold, c.cx, c.cy, theta0)
+      const a = agree(cand)
+      if (!best || a > best.agree) best = { ink: cand, agree: a }
+    }
+    if (!best) continue
+    if (best.agree > fallback.agree) fallback = { score: c.s, agree: best.agree }
+    // 写した結果が元の絵から離れすぎたら、その回数ではなかったと見て次を見る
+    if (best.agree < floor) continue
+    return {
+      ink: best.ink,
+      fold,
+      center: { x: c.cx, y: c.cy },
+      score: c.s,
+      agree: best.agree,
+    }
+  }
+  return { ...none, ...fallback }
+}
+
 /** 縁が墨で埋まっているか。埋まっていれば白黒が逆に来ている */
 function looksInverted(gray: Uint8Array, width: number, height: number, threshold: number): boolean {
   let ink = 0
@@ -386,6 +606,14 @@ export function contoursFromRaster(
   if (options.symmetrize !== false) {
     const sym = symmetrizeMask(mask, width, height)
     if (options.symmetrize === true || sym.axis !== null) mask = sym.ink
+  }
+  // 鏡像の後に回す。順序が逆だと、区画を写した時点で左右の揃えが崩れる。
+  // 明示的に頼まれたときだけ動かす（既定は off。RasterOptions の注を見よ）
+  if (options.rotational !== undefined && options.rotational !== false) {
+    const rot = rotateSymmetrizeMask(mask, width, height, {
+      fold: typeof options.rotational === 'number' ? options.rotational : undefined,
+    })
+    if (rot.fold !== null) mask = rot.ink
   }
 
   const loops = contoursFromMask((x, y) => mask[y * width + x] === 1, width, height)
