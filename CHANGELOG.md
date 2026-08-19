@@ -1,5 +1,9 @@
 # Changelog
 
+## [v0.1.19](https://github.com/kumagallium/geo-logo/compare/v0.1.18...v0.1.19) - 2026-08-19
+
+- feat: 対称性をコンセプトに宣言させ、小さな点も円にする by @kumagallium in https://github.com/kumagallium/geo-logo/pull/52
+
 ## [v0.1.18](https://github.com/kumagallium/geo-logo/compare/v0.1.17...v0.1.18) - 2026-08-19
 
 - feat: 形の整定（ほぼ円なら円にする）と、手描きの除外 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/50
