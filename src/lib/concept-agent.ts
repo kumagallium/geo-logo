@@ -29,6 +29,17 @@ export type ImageConcept = {
    * 意図した描法になる。4 案のうち 1 案をこれに充て、残りは平面的に保つ。
    */
   treatment: 'flat' | 'brush'
+  /**
+   * 左右対称であるべきか。
+   *
+   * 対称かどうかは**題材の意味**で決まるのであって、画素から測って当てる話では
+   * ない。正面から見た顔・鍵・盾・紋章は左右が揃っていないと落ち着かないし、
+   * 走る動物や筆の一撃は揃えたら死ぬ。生成画像は素で数 % ずれるので、測るだけに
+   * 任せると「揃えるべきものが中途半端に非対称」で止まる（実測: 熊の顔で
+   * 片目だけ大きい案が出た）。意味を知っているのは言語モデルなので、そこに
+   * 言わせる。
+   */
+  symmetry: 'mirror' | 'free'
 }
 
 export const imageConceptsSchema = z.object({
@@ -39,6 +50,7 @@ export const imageConceptsSchema = z.object({
         visual: z.string().min(20).max(500),
         rationale: z.string().min(8).max(160),
         treatment: z.enum(['flat', 'brush']).default('flat'),
+        symmetry: z.enum(['mirror', 'free']).default('free'),
       }),
     )
     .min(2),
@@ -71,6 +83,11 @@ function conceptsPrompt(brief: string, count: number): string {
   - brush: 筆や墨で一息に引いた線。始筆と終筆で太さが変わり、線に勢いがある。
     円相（一筆で描く円）のような表現がこれ。visual にも筆致であることと、
     どこで太くどこで細くなるかを書く。ゆらぎが**意図されたもの**だと分かるように。
+- symmetry は左右対称にすべきかどうか。**題材の意味で決める**こと。
+  - mirror: 正面から見た顔、鍵、盾、紋章、円環など、左右が揃っていないと
+    落ち着かないもの。
+  - free: 横向きの姿、走る動物、筆の一撃、意図的に崩した構図など、揃えると
+    死ぬもの。brush の案は必ず free。
 - title は日本語で 12 文字以内。rationale は日本語 1 文。
 
 JSON で返してください。`

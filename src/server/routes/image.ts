@@ -103,6 +103,7 @@ app.post('/design', async (c) => {
       subject?: string
       concept?: string
       brush?: boolean
+      symmetry?: 'mirror' | 'free'
     }>()
     .catch(() => null)
   const brief = body?.brief?.trim()
@@ -145,10 +146,17 @@ app.post('/design', async (c) => {
         tolerance: 0.008,
         radii: 8,
         name: name.slice(0, 40),
-        // 筆致の案は**左右対称に均してはいけない**。筆の勢いは片側が太く片側が
-        // 細いことそのもので、対称化すると太細もかすれも消えて、のっぺりした
-        // 均一の輪になる（実測: 円相が幅の変わらない輪になり、図形数も 12 → 3）
-        ...(brush ? { symmetrize: false as const, symmetry: false as const } : {}),
+        // 対称にするかは**題材の意味**で決まる。画素から測るだけだと、揃える
+        // べきものが数 % のずれで判定に落ち、中途半端な非対称で止まる。
+        // コンセプトが mirror と言ったら揃え、free と言ったら測りもしない。
+        // 筆致は必ず free——筆の勢いは片側が太く片側が細いことそのもので、
+        // 揃えると太細もかすれも消える（実測: 円相が幅の変わらない輪になり、
+        // 図形数も 12 → 3 に落ちた）
+        ...(brush || body?.symmetry === 'free'
+          ? { symmetrize: false as const, symmetry: false as const }
+          : body?.symmetry === 'mirror'
+            ? { symmetrize: true as const }
+            : {}),
         ...(rationale ? { concept: rationale } : {}),
       })
       // 描法は設計自身が持つ。保存した設計を読み直しても、整定が筆致を

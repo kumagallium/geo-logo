@@ -53,6 +53,16 @@ export type RequestDesignsOptions = {
   baseSeed?: number
   /** 題名に使う短い名前（brief は会話の累積で長くなる） */
   name?: string
+  /**
+   * 磨くときに引き継ぐ設計意図。
+   *
+   * ブラッシュアップではコンセプトを引き直さない（選んだ案の構図に錨を下ろす
+   * ため）。そのぶん、選んだ案の題名と意図を持ち越さないと、レポートが
+   * 「画像から復元した作図」という既定文に戻ってしまう（実測）。
+   */
+  concept?: string
+  /** 磨くときに引き継ぐ対称性 */
+  symmetry?: 'mirror' | 'free'
 }
 
 export async function requestDesigns(
@@ -106,6 +116,8 @@ type ImageConcept = {
   rationale: string
   /** 描法。brush は筆致で描かせる案（4 案のうち 1 案） */
   treatment?: 'flat' | 'brush'
+  /** 左右対称にすべきか。題材の意味で決まるので言語モデルに言わせる */
+  symmetry?: 'mirror' | 'free'
 }
 
 /**
@@ -155,8 +167,9 @@ async function requestImageDesigns(
         // コンセプト経由では案名を題名にする（候補の下に解釈の違いが見える）
         name: concept?.title ?? options.name,
         subject: concept?.visual,
-        concept: concept?.rationale,
+        concept: concept?.rationale ?? options.concept,
         brush: concept?.treatment === 'brush',
+        symmetry: concept?.symmetry ?? options.symmetry,
       }),
     })
       .then(async (res) => {

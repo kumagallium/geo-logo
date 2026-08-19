@@ -308,7 +308,10 @@ export default function App() {
         let firstArrival = true
         const results = await requestDesigns(brief, CANDIDATE_COUNT, {
           baseSeed,
-          name,
+          name: baseSeed === undefined ? name : design.name,
+          // 磨くときはコンセプトを引き直さないので、選んだ案の意図を持ち越す。
+          // 渡さないとレポートが「画像から復元した作図」の既定文に戻る
+          ...(baseSeed === undefined ? {} : { concept: design.concept }),
           onCandidate: (r) => {
             if (!r.ok) return
             if (r.seed !== undefined) seedByDesign.current.set(r.design, r.seed)
