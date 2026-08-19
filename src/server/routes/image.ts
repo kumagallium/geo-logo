@@ -96,7 +96,14 @@ app.post('/concepts', async (c) => {
 
 app.post('/design', async (c) => {
   const body = await c.req
-    .json<{ brief?: string; seed?: number; name?: string; subject?: string; concept?: string }>()
+    .json<{
+      brief?: string
+      seed?: number
+      name?: string
+      subject?: string
+      concept?: string
+      brush?: boolean
+    }>()
     .catch(() => null)
   const brief = body?.brief?.trim()
   if (!brief || brief.length > 2000) {
@@ -127,6 +134,7 @@ app.post('/design', async (c) => {
         command: config.command,
         size: config.size,
         seed,
+        brush: body?.brush === true,
       })
       const img = decodeGray(Buffer.from(png))
       // 許容誤差 0.008: 0.02 だと彫った眉や V 字の目が丸められ、絵の「切れ」が
@@ -136,6 +144,10 @@ app.post('/design', async (c) => {
         tolerance: 0.008,
         radii: 8,
         name: name.slice(0, 40),
+        // 筆致の案は**左右対称に均してはいけない**。筆の勢いは片側が太く片側が
+        // 細いことそのもので、対称化すると太細もかすれも消えて、のっぺりした
+        // 均一の輪になる（実測: 円相が幅の変わらない輪になり、図形数も 12 → 3）
+        ...(body?.brush === true ? { symmetrize: false as const, symmetry: false as const } : {}),
         ...(rationale ? { concept: rationale } : {}),
       })
     })
