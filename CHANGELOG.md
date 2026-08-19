@@ -1,5 +1,10 @@
 # Changelog
 
+## [v0.1.22](https://github.com/kumagallium/geo-logo/compare/v0.1.21...v0.1.22) - 2026-08-19
+
+- feat: 回す対称を画素で揃える（既定 off・実測の記録として） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/58
+- fix: 一周していない小片を円に化けさせない by @kumagallium in https://github.com/kumagallium/geo-logo/pull/60
+
 ## [v0.1.21](https://github.com/kumagallium/geo-logo/compare/v0.1.20...v0.1.21) - 2026-08-19
 
 - fix: 候補をフォルダの履歴にも保存する by @kumagallium in https://github.com/kumagallium/geo-logo/pull/56
