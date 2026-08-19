@@ -20,6 +20,15 @@ export type ImageConcept = {
   visual: string
   /** ブリーフをどう表現したかの説明（日本語 1 文。選択の理由が読めるように） */
   rationale: string
+  /**
+   * 描法。flat は輪郭のはっきりした平面的なマーク、brush は筆で一息に引いた線。
+   *
+   * 復元は絵を忠実になぞるので、輪郭のゆらぎは絵から来る。偶然のゆらぎ（画素の
+   * residue）は制御できず、強めることも弱めることもできないので様式にはならない。
+   * **画像モデルに筆致で描かせれば**、ゆらぎは線の勢いと圧の変化を伴う——
+   * 意図した描法になる。4 案のうち 1 案をこれに充て、残りは平面的に保つ。
+   */
+  treatment: 'flat' | 'brush'
 }
 
 export const imageConceptsSchema = z.object({
@@ -29,6 +38,7 @@ export const imageConceptsSchema = z.object({
         title: z.string().min(1).max(20),
         visual: z.string().min(20).max(500),
         rationale: z.string().min(8).max(160),
+        treatment: z.enum(['flat', 'brush']).default('flat'),
       }),
     )
     .min(2),
@@ -56,6 +66,11 @@ function conceptsPrompt(brief: string, count: number): string {
   白の抜きの使い方・「solid silhouette か bold line construction か」まで
   具体的に書く。色や質感は書かない（黒 1 色のマークになる）。
 - 造形は大きな塊で。小さすぎるディテールを visual に入れない。
+- treatment は描法。**ちょうど 1 案だけ "brush"、残りは "flat"** にすること。
+  - flat: 輪郭のはっきりした平面的なマーク。線幅は一定。
+  - brush: 筆や墨で一息に引いた線。始筆と終筆で太さが変わり、線に勢いがある。
+    円相（一筆で描く円）のような表現がこれ。visual にも筆致であることと、
+    どこで太くどこで細くなるかを書く。ゆらぎが**意図されたもの**だと分かるように。
 - title は日本語で 12 文字以内。rationale は日本語 1 文。
 
 JSON で返してください。`

@@ -82,6 +82,36 @@ describe('失敗の言い分け', () => {
   })
 })
 
+describe('描法', () => {
+  /**
+   * 輪郭のゆらぎは絵から来る。画素の residue による偶然のゆらぎは強弱を付け
+   * られず様式にならないが、筆で描かせたゆらぎは線の勢いと圧の変化を伴う。
+   * 平面的なマークとは要求が正反対なので、様式の節ごと入れ替わること。
+   */
+  it('brush では筆致の指定になり、平面的な指定は消える', () => {
+    const flat = symbolImagePrompt('円')
+    const brush = symbolImagePrompt('円', { brush: true })
+
+    expect(flat).toContain('flat vector-style')
+    expect(flat).toContain('No ragged or noisy edges')
+
+    expect(brush).not.toContain('flat vector-style')
+    expect(brush).not.toContain('No ragged or noisy edges')
+    expect(brush).toContain('brush')
+    // 太さが変わること＝筆致の核。ここが抜けると均一な線になる
+    expect(brush).toMatch(/swells and tapers/)
+  })
+
+  it('どちらの描法でも、二値であることは崩さない', () => {
+    for (const p of [symbolImagePrompt('円'), symbolImagePrompt('円', { brush: true })]) {
+      expect(p).toContain('#000000')
+      expect(p).toContain('#FFFFFF')
+      expect(p).toContain('no noise')
+      expect(p).toContain('16 pixels')
+    }
+  })
+})
+
 describe('手元の生成器', () => {
   // 道具ごとに API が違う（Draw Things・ComfyUI・mflux で三者三様）。
   // 「PNG を 1 枚書く」だけ約束させれば、どれでも同じ口で繋がる

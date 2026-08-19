@@ -100,7 +100,13 @@ async function imageGenAvailable(): Promise<boolean> {
  * 投げても待ち行列に並ぶだけで、後ろの要求ほど無応答時間が伸びてタイムアウト
  * 境界に寄る。こちらから直列に送れば、1 要求の待ちは常に生成 1 回ぶんで済む。
  */
-type ImageConcept = { title: string; visual: string; rationale: string }
+type ImageConcept = {
+  title: string
+  visual: string
+  rationale: string
+  /** 描法。brush は筆致で描かせる案（4 案のうち 1 案） */
+  treatment?: 'flat' | 'brush'
+}
 
 /**
  * コンセプト仮説を先に作る（言語モデル）。
@@ -150,6 +156,7 @@ async function requestImageDesigns(
         name: concept?.title ?? options.name,
         subject: concept?.visual,
         concept: concept?.rationale,
+        brush: concept?.treatment === 'brush',
       }),
     })
       .then(async (res) => {

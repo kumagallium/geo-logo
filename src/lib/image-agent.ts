@@ -60,6 +60,8 @@ export type ImageConfig = {
    * （拡散モデルは prompt + seed で決定的）。`{seed}` の差し替え値。
    */
   seed?: number
+  /** 筆致で描かせる。様式の指定なので、プロンプトの節ごと切り替わる */
+  brush?: boolean
 }
 
 /** 無料枠があるほうを既定にする（Google AI Studio は 1 日 500 枚まで無償） */
@@ -75,7 +77,38 @@ export const DEFAULT_IMAGE_MODEL: Record<Exclude<ImageProvider, 'command'>, stri
  * 返る。どれも明度で切った瞬間に壊れる。**何を描くか**より**どう出力するか**
  * のほうを長く書く。
  */
-export function symbolImagePrompt(brief: string): string {
+export function symbolImagePrompt(brief: string, options: { brush?: boolean } = {}): string {
+  // 筆致の案。復元は絵を忠実になぞるので、**輪郭のゆらぎは絵から来る**。画素の
+  // residue による偶然のゆらぎは強弱を付けられず様式にならないが、画像モデルに
+  // 筆で描かせたゆらぎは線の勢いと圧の変化を伴い、意図した描法になる。
+  // 平面的なマークとは要求が正反対（一定の線幅・端の切り揃え）なので、
+  // 様式の節だけを丸ごと差し替える。
+  if (options.brush) {
+    return `A single ink-brush logo symbol: ${brief}
+
+Output requirements — these are absolute:
+- Pure black on a pure white background. Only #000000 and #FFFFFF.
+- No gradients, no grey, no washes, no spatter, no paper texture, no noise.
+- No frame, no border, no background shapes.
+- No text, no letters, no numbers, no signature, no seal, no watermark.
+- One single mark, centred, filling about 70% of the canvas. Not a grid of options.
+- Flat 2D. No perspective, no 3D, no drop shadow.
+
+Design requirements:
+- Drawn as if in ONE confident breath with a broad ink brush — the gesture is
+  the design. Think of a Zen ensō circle: a single sweep, not a traced outline.
+- The stroke swells and tapers along its length: heavier where the brush presses,
+  thinner where it lifts. The width should vary by at least 2:1 from thickest to
+  thinnest, and that variation must follow the direction of the stroke.
+- Any waver in the line is the momentum of the hand, not roughness: few, long,
+  smooth undulations — never many small wobbles, never a jagged edge.
+- The stroke may open (leave a gap) where the brush lifts. Ends are cut by the
+  brush leaving the paper, so they may taper to a point or stop bluntly.
+- Bold and simple. The stroke must be thick enough to stay readable at 16 pixels.
+- Keep the subject recognisable — the gesture describes the subject, it does not
+  replace it.`
+  }
+
   return `A single flat vector-style logo symbol: ${brief}
 
 Output requirements — these are absolute:
@@ -169,7 +202,7 @@ export async function generateSymbolImage(
   config: ImageConfig,
 ): Promise<GeneratedImage> {
   const size = config.size ?? 1024
-  const prompt = symbolImagePrompt(brief)
+  const prompt = symbolImagePrompt(brief, { brush: config.brush })
 
   if (config.provider === 'command') {
     if (!config.command) throw new Error('GEOLOGO_IMAGE_COMMAND が設定されていません')
