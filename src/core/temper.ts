@@ -225,6 +225,23 @@ function circularize(design: LogoDesign, record: Recorder): void {
     const worst = Math.max(...pts.map((q) => Math.abs(Math.hypot(q.x - c.cx, q.y - c.cy) - c.r)))
     const off = worst / c.r
     if (off > CIRCLE_TOL) continue
+
+    // 外れの小ささだけでは足りない。**浅い弧のような小片は、大きな円の上に
+    // きれいに乗る**ので判定を通ってしまい、小片が巨大な円に化ける
+    // （実測: ゴリラの顎まわりの小片が半径 1.36 の円になり、頭の下に元画像に
+    // 無い楕円が現れて一致率が 74% まで落ちた）。
+    //
+    // 円と言うからには、輪郭がその円を**一周している**こと。
+    //   - 半径が自分の大きさに見合う（真円なら差し渡しの半分）
+    //   - 中心から見た角度に大きな隙間が無い
+    const xs = pts.map((q) => q.x)
+    const ys = pts.map((q) => q.y)
+    const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+    if (c.r < span * 0.35 || c.r > span * 0.75) continue
+    const angles = pts.map((q) => Math.atan2(q.y - c.cy, q.x - c.cx)).sort((a, b) => a - b)
+    let gap = angles[0] + Math.PI * 2 - angles[angles.length - 1]
+    for (let k = 1; k < angles.length; k++) gap = Math.max(gap, angles[k] - angles[k - 1])
+    if (gap > Math.PI / 2) continue
     design.shapes[i] = {
       kind: 'circle',
       id: s.id,
