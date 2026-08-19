@@ -250,11 +250,17 @@ export type RasterOptions = {
    */
   symmetrize?: boolean | 'auto'
   /**
-   * 回す対称に寄せるか。既定は自動（回転対称と判定できたときだけ）。
+   * 回す対称に寄せるか。**既定は off**。`'auto'` で自動判定、数を渡せばその
+   * 回数で強制する。
    *
    * 鏡像は `symmetrizeMask` で揃うが、花・輪・車輪のような**回す対称**は
-   * 手つかずだった。実測: 生成した桜は 5 回対称 85% で、花弁の大きさと間隔が
-   * 揃っていない。数を渡せばその回数で強制する。
+   * 手つかずだった。実測: 生成した桜は 5 回対称 84.6% で、揃えると 99.5% まで
+   * 上がり、花弁の大きさと間隔が揃う。
+   *
+   * それでも既定を off にしてあるのは、**この経路で絵そのものを書き換えない**
+   * と決めたため。設計図は絵に上乗せする説明として出し、絵は動かさない。
+   * 揃えると花芯が荒れる（区画が細くなる中心付近で、種が motif の途中で切れる）
+   * ことも、既定にしない理由のひとつ。
    */
   rotational?: boolean | 'auto' | number
 }
@@ -601,8 +607,9 @@ export function contoursFromRaster(
     const sym = symmetrizeMask(mask, width, height)
     if (options.symmetrize === true || sym.axis !== null) mask = sym.ink
   }
-  // 鏡像の後に回す。順序が逆だと、区画を写した時点で左右の揃えが崩れる
-  if (options.rotational !== false) {
+  // 鏡像の後に回す。順序が逆だと、区画を写した時点で左右の揃えが崩れる。
+  // 明示的に頼まれたときだけ動かす（既定は off。RasterOptions の注を見よ）
+  if (options.rotational !== undefined && options.rotational !== false) {
     const rot = rotateSymmetrizeMask(mask, width, height, {
       fold: typeof options.rotational === 'number' ? options.rotational : undefined,
     })
