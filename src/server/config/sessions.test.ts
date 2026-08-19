@@ -69,3 +69,29 @@ describe('履歴のファイル保存', () => {
     expect(listSessions()).toEqual([])
   })
 })
+
+describe('候補の保存', () => {
+  /**
+   * 候補は「選ぶために並べたもの」なので、選び終えるまで残らないと用を成さない。
+   * ファイルに書かないと localStorage にしか残らず、フォルダの履歴と突き合わせた
+   * 時点で消える（実測: 保存された会話に candidates が入っていなかった）。
+   */
+  it('candidates を書いて読み戻せる', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'geologo-sess-'))
+    setWorkspaceDir(dir)
+    try {
+      saveSession({
+        id: 's-1',
+        title: 't',
+        updatedAt: 1,
+        messages: [],
+        design: null,
+        candidates: [{ name: 'a' }, { name: 'b' }],
+      })
+      const back = listSessions()[0] as { candidates?: unknown[] }
+      expect(back.candidates).toHaveLength(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})

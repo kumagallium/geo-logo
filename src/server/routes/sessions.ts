@@ -31,6 +31,9 @@ app.put('/:id', async (c) => {
       updatedAt: typeof body.updatedAt === 'number' ? body.updatedAt : Date.now(),
       messages: body.messages,
       design: body.design ?? null,
+      // 候補も会話の一部。落とすと、フォルダの履歴と突き合わせた時点で
+      // 並べた 4 案が消え、選び直せなくなる
+      ...(Array.isArray(body.candidates) ? { candidates: body.candidates } : {}),
     })
     return c.json({ ok: true })
   } catch (err) {

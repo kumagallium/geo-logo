@@ -39,6 +39,13 @@ export type StoredSession = {
   updatedAt: number
   messages: unknown[]
   design: unknown
+  /**
+   * 並べた候補。選び終える（次に作図する）までは残っていないと用を成さない。
+   *
+   * 画面の状態ではなく会話に属するものなので、ファイルにも書く。書かないと
+   * localStorage にしか残らず、フォルダの履歴と突き合わせた時点で消える。
+   */
+  candidates?: unknown[]
 }
 
 function isStoredSession(x: unknown): x is StoredSession {
