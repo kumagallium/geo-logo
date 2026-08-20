@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.23](https://github.com/kumagallium/geo-logo/compare/v0.1.22...v0.1.23) - 2026-08-20
+
+- docs: 新方向（PROV による画像派生グラフ）の引き継ぎ書 by @kumagallium in https://github.com/kumagallium/geo-logo/pull/63
+- docs: 引き継ぎ書に 3 つの決定を反映（PROVision / スコープ / PROV-JSONLD） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/65
+- docs: 語彙は素の PROV に準拠し、matprov は取り込まない by @kumagallium in https://github.com/kumagallium/geo-logo/pull/66
+- fix: 読み取ったベクタを常時表示し、ブラッシュアップの指示を正しく効かせる by @kumagallium in https://github.com/kumagallium/geo-logo/pull/67
+
 ## [v0.1.22](https://github.com/kumagallium/geo-logo/compare/v0.1.21...v0.1.22) - 2026-08-19
 
 - feat: 回す対称を画素で揃える（既定 off・実測の記録として） by @kumagallium in https://github.com/kumagallium/geo-logo/pull/58
