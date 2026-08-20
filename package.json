@@ -35,14 +35,14 @@
     "ai": "^7.0.66",
     "hono": "^4.13.2",
     "paper": "^0.12.18",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.2.0",
-    "@types/react": "^18.3.17",
+    "@types/react": "^19.2.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^10.0.5",
