@@ -9,7 +9,7 @@ import { randomInt } from 'node:crypto'
 import { decodeGray } from '../../core/png.js'
 import { reconstruct } from '../../core/reconstruct.js'
 import { errorBody, noModelRegisteredBody } from '../../lib/ai-error-codes.js'
-import { generateImageConcepts } from '../../lib/concept-agent.js'
+import { generateImageConcepts, refineImageConcept } from '../../lib/concept-agent.js'
 import { createModel } from '../../lib/create-model.js'
 import { generateSymbolImage } from '../../lib/image-agent.js'
 import { resolveModelConfig } from '../config/resolve-model.js'
@@ -104,6 +104,8 @@ app.post('/design', async (c) => {
       concept?: string
       brush?: boolean
       symmetry?: 'mirror' | 'free'
+      previousVisual?: string
+      instruction?: string
     }>()
     .catch(() => null)
   const brief = body?.brief?.trim()
@@ -115,8 +117,29 @@ app.post('/design', async (c) => {
   const name = body?.name?.trim() || brief
   // コンセプト経由なら、絵の主題は案の視覚記述（英語）を使う。
   // rationale は design.concept に載り、レポートで「狙い」が読める
-  const subject = body?.subject?.trim() || brief
+  let subject = body?.subject?.trim() || brief
   const rationale = body?.concept?.trim()
+
+  // subject が届いていない（＝ブラッシュアップで、選んだ案の視覚記述と直近の
+  // 指示が渡された）なら、言語モデルに視覚記述を書き直させる。
+  //
+  // ここをやらないと subject は brief（会話履歴を積んだ生の日本語文）へ
+  // フォールバックし、往復するたびに肥大化する文字列が英語のプロンプト
+  // テンプレートへそのまま埋め込まれる。実測でこれが「指示が効かない」の
+  // 正体だった——モデルが受け取るのは焦点の合った指示ではなく、薄まっていく
+  // 雑多な文字列になっていた。
+  const previousVisual = body?.previousVisual?.trim()
+  const instruction = body?.instruction?.trim()
+  if (!body?.subject?.trim() && previousVisual && instruction) {
+    const modelConfig = resolveModelConfig(c, {})
+    if (modelConfig) {
+      try {
+        subject = await refineImageConcept(previousVisual, instruction, createModel(modelConfig))
+      } catch {
+        // 書き直しに失敗しても生成自体は止めない。brief へのフォールバックのまま進む
+      }
+    }
+  }
   const config = getImageConfig()
   if (!config) {
     return c.json({ error: '画像生成器が設定されていません', code: 'NO_IMAGE_GENERATOR' }, 409)
@@ -162,7 +185,9 @@ app.post('/design', async (c) => {
       // 元の絵を設計に同梱する。納品物は「元の絵 ＋ 作図シート」で、
       // 復元したベクタで元の絵を置き換えない
       const source = `data:image/png;base64,${Buffer.from(png).toString('base64')}`
-      return { ...built, source, ...(brush ? { freehand: true } : {}) }
+      // 実際に画像モデルへ渡した視覚記述を持ち越す。次にブラッシュアップする
+      // ときに、これが無いと会話履歴の生文字列へフォールバックしてしまう
+      return { ...built, source, visual: subject, ...(brush ? { freehand: true } : {}) }
     })
     // /api/design と同じ形で返す。クライアントは経路の違いを知らなくていい
     return c.json({ design, attempts: [], model: `画像 (${config.command.split(/\s+/)[0].split('/').pop()})`, seed })

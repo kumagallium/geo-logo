@@ -310,8 +310,13 @@ export default function App() {
           baseSeed,
           name: baseSeed === undefined ? name : design.name,
           // 磨くときはコンセプトを引き直さないので、選んだ案の意図を持ち越す。
-          // 渡さないとレポートが「画像から復元した作図」の既定文に戻る
-          ...(baseSeed === undefined ? {} : { concept: design.concept }),
+          // 渡さないとレポートが「画像から復元した作図」の既定文に戻る。
+          // visual も持ち越さないと、サーバーが会話履歴の生文字列を画像モデルへ
+          // 渡してしまい指示が効かなくなる（実測）。instruction は最新の一言
+          // だけを渡す——会話全文だと「今の絵の説明＋直近の指示」の形が崩れる
+          ...(baseSeed === undefined
+            ? {}
+            : { concept: design.concept, previousVisual: design.visual, instruction: text }),
           onCandidate: (r) => {
             if (!r.ok) return
             if (r.seed !== undefined) seedByDesign.current.set(r.design, r.seed)
@@ -510,6 +515,17 @@ export default function App() {
                   subtitle={`${compiled.built.parts.length} パーツ / ${compiled.design.module}px per module`}
                   svg={compiled.logoSvg}
                   filename={`${slug}.svg`}
+                />
+              )}
+              {/* 読み取った線だけを再合成した絵。作図シートは補助線つきの図面で
+                  比べにくいので、元の絵とこちらを並べると読み取りの精度が見える
+                  （compiled.logoSvg は元の絵の有無に関わらず常に計算済み） */}
+              {compiled.design.source && (
+                <SvgPane
+                  title="読み取った線"
+                  subtitle="作図シートと同じ幾何データを、補助線なしで再合成"
+                  svg={compiled.logoSvg}
+                  filename={`${slug}-traced.svg`}
                 />
               )}
               <SvgPane

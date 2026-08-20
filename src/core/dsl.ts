@@ -223,6 +223,15 @@ export const designSchema = z.object({
    * 設計と一緒に持ち回ることで、保存した会話を開き直しても元の絵が付いてくる。
    */
   source: z.string().max(4_000_000).optional(),
+  /**
+   * 画像モデルへ渡した視覚記述（英語）。
+   *
+   * ブラッシュアップで持ち越すためのもの。無いと選択中の設計から subject を
+   * 復元できず、呼び出し側が会話履歴の生文字列を画像モデルへ渡してしまう
+   * （実測: 指示が効かなくなった。詳細は lib/concept-agent.ts の
+   * refineImageConcept）。
+   */
+  visual: z.string().max(2000).optional(),
   palette: z.object({
     primary: hexColor.default('#111111'),
     secondary: hexColor.default('#8A8A8A'),

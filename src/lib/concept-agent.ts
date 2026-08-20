@@ -105,3 +105,56 @@ export async function generateImageConcepts(
   })
   return object.concepts.slice(0, count)
 }
+
+/** ブラッシュアップ 1 案ぶんの結果。visual だけが要る（絵の再生成に使う） */
+export const refinedConceptSchema = z.object({
+  visual: z.string().min(20).max(500),
+})
+
+/**
+ * 選んだ案の視覚記述を、新しい指示に沿って書き直す。
+ *
+ * ブラッシュアップは選んだ案の構図に錨を下ろす（seed を引き継ぐ）ため、
+ * generateImageConcepts（4 案に割る・コンセプトを引き直す）は使わない。
+ * ただし視覚記述（visual）そのものは指示のたびに更新しないと、直近の
+ * バグへ戻る: subject が届かないと呼び出し側が brief（会話履歴を
+ * つなげた生の日本語文）をそのまま画像モデルへ渡してしまい、指示が
+ * 効かなくなる（実測: 眉や口の追加は seed 再利用の txt2img で効くのに、
+ * 肥大化する日本語の会話ログを渡すと何も変わらなくなった）。
+ *
+ * 元の visual を「今の絵の説明」として渡し、直近の指示だけを反映させる。
+ * 全体を書き直させない——全体を書き直すと、指示していない部分まで
+ * 変わって seed の引き継ぎが無意味になる。
+ *
+ * プロンプト中で JSON のキー名（visual）を**明示する**こと。省略すると、
+ * 構造化出力に対応しないモデル（実測: gemma-4-31B）は別の名前（"prompt" 等）
+ * を勝手に使い、スキーマ不一致で生成が黙って失敗する。
+ */
+function refineConceptPrompt(previousVisual: string, instruction: string): string {
+  return `あなたはロゴのアートディレクターです。今の絵の視覚記述と、次の指示があります。
+
+今の絵の視覚記述: ${previousVisual}
+
+次の指示: ${instruction}
+
+要件:
+- 今の絵の構図・主題・描法は**保つ**こと。指示された変更点だけを反映する。
+- visual は画像生成モデルへそのまま渡す英語の視覚記述 1 つ。主題・構図・
+  白の抜きの使い方まで具体的に書く。色や質感は書かない（黒 1 色のマークになる）。
+- 指示が今の絵と矛盾する場合は、指示を優先する。
+
+JSON で {"visual": "..."} の形で返してください。`
+}
+
+export async function refineImageConcept(
+  previousVisual: string,
+  instruction: string,
+  model: LanguageModel,
+): Promise<string> {
+  const { object } = await generateObject({
+    model,
+    schema: refinedConceptSchema,
+    prompt: refineConceptPrompt(previousVisual, instruction),
+  })
+  return object.visual
+}
