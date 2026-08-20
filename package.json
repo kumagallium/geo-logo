@@ -23,7 +23,7 @@
     "reconstruct": "tsx scripts/reconstruct.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.110",
+    "@ai-sdk/anthropic": "^4.0.39",
     "@ai-sdk/google": "^3.0.108",
     "@ai-sdk/openai": "^4.0.42",
     "@ai-sdk/openai-compatible": "^2.0.67",
