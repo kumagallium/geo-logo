@@ -63,6 +63,16 @@ export type RequestDesignsOptions = {
   concept?: string
   /** 磨くときに引き継ぐ対称性 */
   symmetry?: 'mirror' | 'free'
+  /**
+   * 磨くときに引き継ぐ視覚記述（選んだ設計の design.visual）。
+   *
+   * これが無いと、サーバーは会話履歴を生の文字列で画像モデルへ渡してしまい
+   * 指示が効かなくなる（実測）。instruction とあわせて渡すと、サーバーが
+   * 「今の絵の説明 + 直近の指示」から更新後の視覚記述を作り直す。
+   */
+  previousVisual?: string
+  /** 磨くときの直近の指示（会話履歴の全文ではなく、最新の一言） */
+  instruction?: string
 }
 
 export async function requestDesigns(
@@ -170,6 +180,10 @@ async function requestImageDesigns(
         concept: concept?.rationale ?? options.concept,
         brush: concept?.treatment === 'brush',
         symmetry: concept?.symmetry ?? options.symmetry,
+        // concept が無いとき（磨くとき）だけサーバー側で使われる。
+        // concept があるときは無視されるので、常に渡してよい
+        previousVisual: options.previousVisual,
+        instruction: options.instruction,
       }),
     })
       .then(async (res) => {
