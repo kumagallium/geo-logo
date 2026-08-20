@@ -76,20 +76,25 @@ geo-logo は「生成画像を円と直線の作図に起こし直す」道具�
   - 既存資産と噛み合う。図版は Graphium のノートに貼られ、元データは asterism にある
 
 **永続化**: **PROV-JSONLD をローカルのファイルに書く。** DB もサーバも要らない。
-`matprov-schema` と同じ `@context` の積み方に揃え、画像生成固有の語（model / seed /
-prompt）は `provision` 名前空間の拡張として足す。
+**W3C PROV に完全準拠**させ、画像生成固有の語（model / seed / prompt）だけを
+`provision` 名前空間の拡張として足す。
+
+`matprov-schema` は**取り込まない**（無機材料に固有の語彙なので、図版の系譜には
+要らない）。**拡張の書き方の先例としてだけ**参照する。
 
 ```json
 {
   "@context": [
     {"@vocab": "http://www.w3.org/ns/prov#"},
     "https://openprovenance.org/prov-jsonld/context.jsonld",
-    "https://kumagallium.github.io/matprov-schema/context.jsonld",
     "https://kumagallium.github.io/provision-schema/context.jsonld"
   ],
   "@graph": [ /* Entity / Activity / Agent */ ]
 }
 ```
+
+素の PROV に寄せるほど連携先が広がる。asterism が PROV-O first-class である以上、
+**独自語彙を減らすことがそのまま相互運用性になる**。
 
 **連携（変換なしで成立する）**:
 
@@ -98,7 +103,7 @@ prompt）は `provision` 名前空間の拡張として足す。
 | `asterism`（PROV-O first-class, SPARQL/MCP） | そのまま取り込める。AI が系譜を SPARQL で引ける |
 | `prov-jsonld-viz` | そのまま可視化できる |
 | `Graphium`（PROV-DM のノート） | 語彙が揃うので、ノートと画像の系譜が繋がる |
-| `matprov-schema` | `@context` の拡張のしかたを踏襲する |
+| `matprov-schema` | **取り込まない**。名前空間の切り方だけ真似る（材料系固有の語彙） |
 
 ---
 
@@ -126,7 +131,7 @@ geo-logo では**複数セッションが同じ作業ツリーを共有**して�
 | 4 | 会話の保存 | `src/server/config/sessions.ts`, `src/features/chat/session-store.ts` | ファイル保存とローカル保存の突き合わせ |
 | 5 | デスクトップ | `src-tauri/`, `src/lib/sidecar.ts`, `src/lib/api-base.ts` | サイドカー起動と `apiFetch`（§11 の落とし穴） |
 | 6 | 配布 | `.tagpr`, `.github/workflows/desktop-build.yml` | 署名・公証・updater |
-| 7 | **語彙の先例** | `github.com/kumagallium/matprov-schema` | `@context` の積み方。これに倣う |
+| 7 | **拡張の先例** | `github.com/kumagallium/matprov-schema` | 名前空間の切り方だけ見る。**語彙は取り込まない** |
 | 8 | **取り込み先** | `github.com/kumagallium/asterism` | PROV-O first-class。CSV→RDF→SPARQL/MCP |
 | 9 | **可視化** | `github.com/kumagallium/prov-jsonld-viz` | 既存のビューアに載るか確かめる |
 | 10 | **ノート側** | `github.com/kumagallium/Graphium`, `prov-blocknote` | PROV-DM の使い方 |
@@ -157,7 +162,7 @@ geo-logo では**複数セッションが同じ作業ツリーを共有**して�
 - 1.1 リポジトリ作成、pnpm + TypeScript + vitest
 - 1.2 §5 の 3 点を決めて `docs/decisions.md` に記録
 - 1.3 PROV の型定義（Entity / Activity / Agent / wasDerivedFrom）と、**PROV-JSONLD** の読み書き
-- 1.4 `provision-schema` の `@context` を用意（matprov に倣う）
+- 1.4 `provision-schema` の `@context` を用意（**素の PROV + 画像生成固有の語だけ**）
 - 達成条件: 型と永続化のテストが通る。**書き出した JSON-LD が `prov-jsonld-viz` で開ける**
 
 ### Step 2 — 生成と記録をつなぐ
@@ -190,7 +195,8 @@ geo-logo では**複数セッションが同じ作業ツリーを共有**して�
   既存 Entity の中身を書き換えると来歴が嘘になる
 - **再現に要る情報を落とさない。** seed / モデル識別子 / プロンプト全文。
   1 つでも欠けると「再実行できる」という価値の柱が折れる
-- **PROV の標準語彙から勝手に外れない。** 独自拡張は `provision` 名前空間を分けて足す。
+- **W3C PROV に完全準拠する。** 独自拡張は `provision` 名前空間を分けて最小限だけ足す。
+  他ドメイン固有の語彙（matprov 等）は取り込まない。
   ここを崩すと asterism / prov-jsonld-viz / Graphium との連携が全部切れる——
   **連携できることが差別化の本体**なので、語彙の独自化は製品価値の毀損に直結する
 - **弱いモデルに DSL を直接書かせない。** 存在しない述語を発明する。
