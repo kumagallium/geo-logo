@@ -22,7 +22,7 @@ importers:
         version: 2.0.67(zod@4.4.3)
       '@hono/node-server':
         specifier: ^2.1.1
-        version: 2.1.1(hono@4.13.2)
+        version: 2.1.1(hono@4.13.16)
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -39,8 +39,8 @@ importers:
         specifier: ^7.0.66
         version: 7.0.66(zod@4.4.3)
       hono:
-        specifier: ^4.13.2
-        version: 4.13.2
+        specifier: ^4.13.16
+        version: 4.13.16
       paper:
         specifier: ^0.12.18
         version: 0.12.18
@@ -992,8 +992,8 @@ packages:
     resolution: {integrity: sha512-QRbvDIbx6YklUe6RxeTeleMR0yv3cYH6PsPZHcnVn7xv7zO1BHN8r0XETu8n6Ye3Q+ahtSarc3WgtNWmehIBfA==}
     engines: {node: '>=18'}
 
-  hono@4.13.2:
-    resolution: {integrity: sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==}
+  hono@4.13.16:
+    resolution: {integrity: sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==}
     engines: {node: '>=16.9.0'}
 
   js-tokens@4.0.0:
@@ -1598,9 +1598,9 @@ snapshots:
 
   '@fastify/busboy@2.1.1': {}
 
-  '@hono/node-server@2.1.1(hono@4.13.2)':
+  '@hono/node-server@2.1.1(hono@4.13.16)':
     dependencies:
-      hono: 4.13.2
+      hono: 4.13.16
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -2010,7 +2010,7 @@ snapshots:
 
   get-east-asian-width@1.6.0: {}
 
-  hono@4.13.2: {}
+  hono@4.13.16: {}
 
   js-tokens@4.0.0: {}
 
